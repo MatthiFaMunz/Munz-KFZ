@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Munz-KFZ Dispo</title>
+  <link rel="stylesheet" href="style.css?v=20260404">
+</head>
+<body>
+
+<nav class="nav">
+  <h1>Munz-KFZ Dispo</h1>
+  <button class="nav-btn active" data-page="auftraege">Aufträge</button>
+  <button class="nav-btn" data-page="disposition">Disposition</button>
+  <button class="nav-btn" data-page="kunden">Kunden</button>
+  <button class="nav-btn" data-page="lkw-typen">LKW-Typen</button>
+  <button class="nav-btn" data-page="paletten-typen">Palettentypen</button>
+</nav>
+
+<div class="content">
+  <!-- Aufträge -->
+  <div id="page-auftraege" class="page active"></div>
+
+  <!-- Disposition -->
+  <div id="page-disposition" class="page"></div>
+
+  <!-- Kunden -->
+  <div id="page-kunden" class="page"></div>
+
+  <!-- LKW-Typen -->
+  <div id="page-lkw-typen" class="page"></div>
+
+  <!-- Palettentypen -->
+  <div id="page-paletten-typen" class="page"></div>
+</div>
+
+<!-- Modal Overlay -->
+<div id="modal-overlay" class="modal-overlay">
+  <div id="modal" class="modal"></div>
+</div>
+
+<!-- Feedback -->
+<div id="feedback" class="feedback"></div>
+
+<script src="app.js?v=20260404"></script>
+</body>
+</html>

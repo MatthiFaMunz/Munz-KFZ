@@ -1,0 +1,674 @@
+// ===================== GLOBALS =====================
+let kundenCache = [];
+let palettenTypenCache = [];
+let currentPage = 'auftraege';
+
+// ===================== API HELPER =====================
+async function api(url, opts = {}) {
+  try {
+    const r = await fetch(url, opts);
+    return await r.json();
+  } catch (e) {
+    console.error('API Error:', e);
+    return { error: e.message };
+  }
+}
+
+function showFeedback(msg, type = 'ok') {
+  const el = document.getElementById('feedback');
+  el.textContent = msg;
+  el.className = 'feedback' + (type === 'error' ? ' error' : '');
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 3000);
+}
+
+function openModal(html) {
+  document.getElementById('modal').innerHTML = html;
+  document.getElementById('modal-overlay').classList.add('active');
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('active');
+}
+
+document.getElementById('modal-overlay').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+// ===================== NAVIGATION =====================
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    navigateTo(btn.dataset.page);
+  });
+});
+
+function navigateTo(page) {
+  currentPage = page;
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.nav-btn[data-page="${page}"]`).classList.add('active');
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById(`page-${page}`).classList.add('active');
+
+  if (page === 'auftraege') loadAuftraege();
+  else if (page === 'disposition') loadDisposition();
+  else if (page === 'kunden') loadKunden();
+  else if (page === 'lkw-typen') loadLkwTypen();
+  else if (page === 'paletten-typen') loadPalettenTypen();
+}
+
+// ===================== AUFTRÄGE =====================
+let auftraegeFilter = '';
+
+async function loadAuftraege() {
+  const url = auftraegeFilter ? `/api/auftraege?status=${auftraegeFilter}` : '/api/auftraege';
+  const data = await api(url);
+  if (data.error) return;
+
+  // Stats
+  const alle = await api('/api/auftraege');
+  const stats = { offen: 0, geplant: 0, unterwegs: 0, erledigt: 0 };
+  if (Array.isArray(alle)) alle.forEach(a => { if (stats[a.status] !== undefined) stats[a.status]++; });
+
+  const container = document.getElementById('page-auftraege');
+  container.innerHTML = `
+    <div class="stats-row">
+      <div class="stat-card"><div class="stat-value">${stats.offen}</div><div class="stat-label">Offen</div></div>
+      <div class="stat-card"><div class="stat-value">${stats.geplant}</div><div class="stat-label">Geplant</div></div>
+      <div class="stat-card"><div class="stat-value">${stats.unterwegs}</div><div class="stat-label">Unterwegs</div></div>
+      <div class="stat-card"><div class="stat-value">${stats.erledigt}</div><div class="stat-label">Erledigt</div></div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <span>Aufträge</span>
+        <button class="btn btn-primary" onclick="openAuftragModal()">+ Neuer Auftrag</button>
+      </div>
+      <div class="filter-bar">
+        <select id="auftraege-filter" onchange="auftraegeFilter=this.value; loadAuftraege()">
+          <option value="">Alle</option>
+          <option value="offen" ${auftraegeFilter === 'offen' ? 'selected' : ''}>Offen</option>
+          <option value="geplant" ${auftraegeFilter === 'geplant' ? 'selected' : ''}>Geplant</option>
+          <option value="unterwegs" ${auftraegeFilter === 'unterwegs' ? 'selected' : ''}>Unterwegs</option>
+          <option value="erledigt" ${auftraegeFilter === 'erledigt' ? 'selected' : ''}>Erledigt</option>
+        </select>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Nr.</th><th>Datum</th><th>Kunde</th><th>Abholung</th><th>Lieferung</th>
+          <th>Positionen</th><th>Transport</th><th>Status</th><th>Aktionen</th>
+        </tr></thead>
+        <tbody>
+          ${Array.isArray(data) && data.length ? data.map(a => `
+            <tr>
+              <td><strong>#${a.id}</strong></td>
+              <td>${a.abholung_datum || a.datum || '—'}</td>
+              <td>${esc(a.display_name)}</td>
+              <td>${esc(a.abholung_ort || '—')}</td>
+              <td>${esc(a.lieferung_ort || '—')}</td>
+              <td>${a.positionen ? a.positionen.map(p => `${p.anzahl}x ${esc(p.typ_name || p.paletten_typ_name || 'Palette')}`).join(', ') : '—'}</td>
+              <td>
+                ${transportBadge(a.transport_art)}
+                ${a.gefahrgut ? '<span class="gefahrgut-badge">ADR</span>' : ''}
+              </td>
+              <td><span class="status-badge status-${a.status}" onclick="cycleStatus(${a.id}, '${a.status}')">${a.status}</span></td>
+              <td>
+                <button class="btn btn-sm btn-outline" onclick="openAuftragModal(${a.id})">Bearbeiten</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteAuftrag(${a.id})">X</button>
+              </td>
+            </tr>
+          `).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--text-muted)">Keine Aufträge</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function transportBadge(art) {
+  const labels = { inland: 'Inland', international: 'International', a1_schweiz: 'A1 Schweiz' };
+  return `<span class="transport-badge transport-${art || 'inland'}">${labels[art] || art || 'Inland'}</span>`;
+}
+
+function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+const statusOrder = ['offen', 'geplant', 'unterwegs', 'erledigt'];
+
+async function cycleStatus(id, current) {
+  const idx = statusOrder.indexOf(current);
+  const next = statusOrder[(idx + 1) % statusOrder.length];
+  await api(`/api/auftraege/${id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: next }) });
+  loadAuftraege();
+}
+
+async function deleteAuftrag(id) {
+  if (!confirm('Auftrag wirklich löschen?')) return;
+  await api(`/api/auftraege/${id}`, { method: 'DELETE' });
+  showFeedback('Auftrag gelöscht');
+  loadAuftraege();
+}
+
+async function openAuftragModal(id) {
+  // Caches laden
+  kundenCache = await api('/api/kunden');
+  palettenTypenCache = await api('/api/paletten-typen');
+
+  let a = null;
+  if (id) {
+    a = await api(`/api/auftraege/${id}`);
+    if (a.error) return;
+  }
+
+  const today = new Date().toISOString().split('T')[0];
+
+  openModal(`
+    <h3>${a ? 'Auftrag bearbeiten' : 'Neuer Auftrag'}</h3>
+    <div class="form-row">
+      <div class="form-group flex1 autocomplete-wrapper">
+        <label>Kunde</label>
+        <input type="text" id="af-kunde" value="${esc(a ? (a.kunde_ref_name || a.kunde_name || '') : '')}" placeholder="Kundenname..." oninput="kundeAutocomplete(this)">
+        <input type="hidden" id="af-kunde-id" value="${a?.kunde_id || ''}">
+        <div id="af-kunde-ac" class="autocomplete-list" style="display:none"></div>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group flex1">
+        <label>Abholdatum</label>
+        <input type="date" id="af-abholung-datum" value="${a?.abholung_datum || today}">
+      </div>
+      <div class="form-group flex1">
+        <label>Abholort</label>
+        <input type="text" id="af-abholung-ort" value="${esc(a?.abholung_ort || '')}">
+      </div>
+      <div class="form-group flex1">
+        <label>Lieferort</label>
+        <input type="text" id="af-lieferung-ort" value="${esc(a?.lieferung_ort || '')}">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Transport-Art</label>
+        <select id="af-transport">
+          <option value="inland" ${a?.transport_art === 'inland' ? 'selected' : ''}>Inland</option>
+          <option value="international" ${a?.transport_art === 'international' ? 'selected' : ''}>International</option>
+          <option value="a1_schweiz" ${a?.transport_art === 'a1_schweiz' ? 'selected' : ''}>A1 Schweiz</option>
+        </select>
+      </div>
+      <div class="form-group" style="align-self:center;padding-top:20px">
+        <label style="display:inline"><input type="checkbox" id="af-gefahrgut" ${a?.gefahrgut ? 'checked' : ''}> Gefahrgut (ADR)</label>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group flex1">
+        <label>Notizen</label>
+        <textarea id="af-notizen" rows="2" style="width:100%">${esc(a?.notizen || '')}</textarea>
+      </div>
+    </div>
+
+    <h4 style="margin-top:16px;margin-bottom:8px">Positionen</h4>
+    <table class="pos-table" id="pos-table">
+      <thead><tr>
+        <th>Palettentyp</th><th>Anzahl</th><th>Gewicht/Stk (kg)</th><th>Höhe (mm)</th><th>Stapelbar</th><th>Beschreibung</th><th></th>
+      </tr></thead>
+      <tbody id="pos-tbody"></tbody>
+    </table>
+    <button class="btn btn-sm btn-outline" style="margin-top:8px" onclick="addPositionRow()">+ Position</button>
+
+    <div style="margin-top:20px;display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-outline" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="saveAuftrag(${id || 'null'})">${a ? 'Speichern' : 'Anlegen'}</button>
+    </div>
+  `);
+
+  // Bestehende Positionen laden
+  if (a && a.positionen) {
+    for (const p of a.positionen) {
+      addPositionRow(p);
+    }
+  } else {
+    addPositionRow();
+  }
+}
+
+function addPositionRow(p = null) {
+  const tbody = document.getElementById('pos-tbody');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td>
+      <select class="pos-typ" onchange="posTypChanged(this)">
+        <option value="">— Freitext —</option>
+        ${palettenTypenCache.filter(t => t.aktiv).map(t => `<option value="${t.id}" ${p?.paletten_typ_id == t.id ? 'selected' : ''}>${esc(t.name)} (${t.laenge}x${t.breite})</option>`).join('')}
+      </select>
+      <input type="text" class="pos-typ-name" placeholder="oder Freitext..." value="${esc(p?.paletten_typ_name || '')}" style="margin-top:4px;${p?.paletten_typ_id ? 'display:none' : ''}">
+    </td>
+    <td><input type="number" class="pos-anzahl" value="${p?.anzahl || 1}" min="1"></td>
+    <td><input type="number" class="pos-gewicht" value="${p?.gewicht_kg || ''}" step="0.1" placeholder="kg"></td>
+    <td><input type="number" class="pos-hoehe" value="${p?.hoehe_mm || ''}" placeholder="mm"></td>
+    <td style="text-align:center"><input type="checkbox" class="pos-stapelbar" ${p?.stapelbar ? 'checked' : ''}></td>
+    <td><input type="text" class="pos-beschreibung" value="${esc(p?.beschreibung || '')}" placeholder="z.B. Maschinenteile"></td>
+    <td><button class="btn btn-sm btn-danger" onclick="this.closest('tr').remove()">X</button></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+function posTypChanged(sel) {
+  const freitext = sel.closest('td').querySelector('.pos-typ-name');
+  freitext.style.display = sel.value ? 'none' : 'block';
+  if (sel.value) freitext.value = '';
+}
+
+function kundeAutocomplete(input) {
+  const val = input.value.toLowerCase();
+  const ac = document.getElementById('af-kunde-ac');
+  if (val.length < 1) { ac.style.display = 'none'; return; }
+
+  const matches = kundenCache.filter(k => k.name.toLowerCase().includes(val));
+  if (!matches.length) { ac.style.display = 'none'; return; }
+
+  ac.innerHTML = matches.map(k => `<div class="autocomplete-item" onclick="selectKunde(${k.id}, '${esc(k.name)}')">${esc(k.name)}${k.ort ? ' (' + esc(k.ort) + ')' : ''}</div>`).join('');
+  ac.style.display = 'block';
+}
+
+function selectKunde(id, name) {
+  document.getElementById('af-kunde').value = name;
+  document.getElementById('af-kunde-id').value = id;
+  document.getElementById('af-kunde-ac').style.display = 'none';
+}
+
+async function saveAuftrag(id) {
+  const kundeId = document.getElementById('af-kunde-id').value;
+  const kundeName = document.getElementById('af-kunde').value;
+
+  const positionen = [];
+  document.querySelectorAll('#pos-tbody tr').forEach(tr => {
+    const typSel = tr.querySelector('.pos-typ');
+    positionen.push({
+      paletten_typ_id: typSel.value || null,
+      paletten_typ_name: tr.querySelector('.pos-typ-name').value || null,
+      anzahl: parseInt(tr.querySelector('.pos-anzahl').value) || 1,
+      gewicht_kg: parseFloat(tr.querySelector('.pos-gewicht').value) || null,
+      hoehe_mm: parseInt(tr.querySelector('.pos-hoehe').value) || null,
+      stapelbar: tr.querySelector('.pos-stapelbar').checked ? 1 : 0,
+      beschreibung: tr.querySelector('.pos-beschreibung').value || null,
+    });
+  });
+
+  const body = {
+    kunde_id: kundeId || null,
+    kunde_name: kundeId ? null : kundeName,
+    datum: new Date().toISOString().split('T')[0],
+    abholung_datum: document.getElementById('af-abholung-datum').value || null,
+    abholung_ort: document.getElementById('af-abholung-ort').value || null,
+    lieferung_ort: document.getElementById('af-lieferung-ort').value || null,
+    transport_art: document.getElementById('af-transport').value,
+    gefahrgut: document.getElementById('af-gefahrgut').checked ? 1 : 0,
+    notizen: document.getElementById('af-notizen').value || null,
+    positionen
+  };
+
+  const method = id ? 'PUT' : 'POST';
+  const url = id ? `/api/auftraege/${id}` : '/api/auftraege';
+  const r = await api(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+  if (r.ok || r.id) {
+    closeModal();
+    showFeedback(id ? 'Auftrag gespeichert' : 'Auftrag angelegt');
+    loadAuftraege();
+  } else {
+    showFeedback(r.error || 'Fehler', 'error');
+  }
+}
+
+// ===================== DISPOSITION =====================
+
+async function loadDisposition() {
+  const container = document.getElementById('page-disposition');
+  const data = await api('/api/disposition');
+  if (data.error) { container.innerHTML = `<div class="card">Fehler: ${data.error}</div>`; return; }
+
+  const { auftraege, lkwTypen } = data;
+
+  // Gruppiert nach Abholdatum
+  const tage = {};
+  for (const a of auftraege) {
+    const tag = a.abholung_datum || 'Ohne Datum';
+    if (!tage[tag]) tage[tag] = [];
+    tage[tag].push(a);
+  }
+
+  let html = `<div class="card">
+    <div class="card-header">
+      <span>Disposition</span>
+      <button class="btn btn-primary btn-sm" onclick="berechnePackung()">Packberechnung</button>
+    </div>`;
+
+  if (!auftraege.length) {
+    html += '<p style="color:var(--text-muted);padding:20px;text-align:center">Keine offenen/geplanten Aufträge</p>';
+  }
+
+  for (const [tag, aufs] of Object.entries(tage)) {
+    const gesamtPaletten = aufs.reduce((s, a) => s + (a.positionen?.reduce((s2, p) => s2 + (p.anzahl || 0), 0) || 0), 0);
+    html += `<div style="margin-top:16px">
+      <h4 style="margin-bottom:8px">${tag === 'Ohne Datum' ? 'Ohne Datum' : formatDate(tag)} — ${gesamtPaletten} Paletten</h4>
+      <table>
+        <thead><tr><th><input type="checkbox" class="dispo-select-all" data-tag="${esc(tag)}" onchange="dispoSelectAll(this)"></th><th>Nr.</th><th>Kunde</th><th>Route</th><th>Positionen</th><th>Transport</th></tr></thead>
+        <tbody>
+          ${aufs.map(a => `<tr>
+            <td><input type="checkbox" class="dispo-check" value="${a.id}"></td>
+            <td>#${a.id}</td>
+            <td>${esc(a.display_name)}</td>
+            <td>${esc(a.abholung_ort || '?')} → ${esc(a.lieferung_ort || '?')}</td>
+            <td>${a.positionen?.map(p => `${p.anzahl}x ${esc(p.typ_name || p.paletten_typ_name || 'Pal.')}`).join(', ') || '—'}</td>
+            <td>${transportBadge(a.transport_art)} ${a.gefahrgut ? '<span class="gefahrgut-badge">ADR</span>' : ''}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  html += '</div><div id="dispo-result"></div>';
+  container.innerHTML = html;
+}
+
+function dispoSelectAll(cb) {
+  const checks = document.querySelectorAll('.dispo-check');
+  checks.forEach(c => c.checked = cb.checked);
+}
+
+async function berechnePackung() {
+  const ids = [...document.querySelectorAll('.dispo-check:checked')].map(c => parseInt(c.value));
+  if (!ids.length) { showFeedback('Bitte Aufträge auswählen', 'error'); return; }
+
+  const r = await api('/api/disposition/packen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auftrag_ids: ids }) });
+  if (r.error) { showFeedback(r.error, 'error'); return; }
+
+  renderPackResult(r);
+}
+
+function renderPackResult(data) {
+  const { reihen, gesamtLaenge, gesamtGewicht, gesamtAnzahl, empfehlung } = data;
+
+  let html = '<div class="card"><div class="card-header">Packberechnung</div>';
+
+  // Zusammenfassung
+  html += `<div class="stats-row">
+    <div class="stat-card"><div class="stat-value">${gesamtAnzahl}</div><div class="stat-label">Paletten</div></div>
+    <div class="stat-card"><div class="stat-value">${(gesamtLaenge / 1000).toFixed(1)}m</div><div class="stat-label">Ladelänge</div></div>
+    <div class="stat-card"><div class="stat-value">${gesamtGewicht}kg</div><div class="stat-label">Gewicht</div></div>
+    <div class="stat-card"><div class="stat-value">${empfehlung ? empfehlung.name : '—'}</div><div class="stat-label">Empfehlung</div></div>
+  </div>`;
+
+  // Auslastungsbalken
+  if (empfehlung) {
+    const pct = empfehlung.auslastung;
+    const color = pct > 90 ? 'var(--rot)' : pct > 70 ? 'var(--gelb)' : 'var(--gruen)';
+    html += `<div style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+        <span>${empfehlung.name} (${(empfehlung.laenge / 1000).toFixed(1)}m)</span>
+        <span>${pct}% Auslastung${empfehlung.max_gewicht ? ' — ' + gesamtGewicht + '/' + empfehlung.max_gewicht + 'kg' : ''}</span>
+      </div>
+      <div style="background:#e0e0e0;border-radius:4px;height:16px;overflow:hidden">
+        <div style="background:${color};height:100%;width:${Math.min(pct, 100)}%;border-radius:4px;transition:width .3s"></div>
+      </div>
+      ${empfehlung.gewichtUeberschritten ? '<div style="color:var(--rot);font-weight:700;margin-top:4px">⚠ Gewicht überschritten!</div>' : ''}
+    </div>`;
+  }
+
+  // Draufsicht
+  if (empfehlung && reihen.length) {
+    html += renderDraufsicht(reihen, empfehlung);
+  }
+
+  html += '</div>';
+  document.getElementById('dispo-result').innerHTML = html;
+}
+
+function renderDraufsicht(reihen, empfehlung) {
+  const lkwLaenge = empfehlung.laenge;
+  const lkwBreite = 2450;
+  const kabineW = 40;
+  const containerW = 700;
+  const scale = containerW / lkwLaenge;
+  const containerH = lkwBreite * scale;
+
+  const farben = ['#42a5f5', '#66bb6a', '#ffa726', '#ef5350', '#ab47bc', '#26c6da', '#8d6e63', '#78909c', '#d4e157', '#ec407a', '#5c6bc0', '#29b6f6'];
+  const farbMap = {};
+  let fi = 0;
+
+  let palletsHtml = '';
+  let xPos = 0;
+
+  for (const reihe of reihen) {
+    let yPos = 0;
+    for (const pal of reihe.paletten) {
+      if (!farbMap[pal.name]) farbMap[pal.name] = farben[fi++ % farben.length];
+      const w = pal.laenge * scale;
+      const h = pal.breite * scale;
+      palletsHtml += `<div style="position:absolute;left:${kabineW + xPos}px;top:${yPos}px;width:${w}px;height:${h}px;background:${farbMap[pal.name]};border:1px solid rgba(0,0,0,.2);border-radius:2px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:600;overflow:hidden;text-shadow:0 1px 2px rgba(0,0,0,.3)" title="${pal.name} ${pal.laenge}x${pal.breite}mm">${pal.name}</div>`;
+      yPos += h;
+    }
+    xPos += reihe.tiefe * scale;
+  }
+
+  // Meter-Markierungen
+  let meter = '';
+  for (let m = 1; m * 1000 < lkwLaenge; m++) {
+    const x = kabineW + m * 1000 * scale;
+    meter += `<div style="position:absolute;left:${x}px;bottom:0;font-size:8px;color:#999">${m}m</div>`;
+    meter += `<div style="position:absolute;left:${x}px;top:0;height:100%;border-left:1px dashed rgba(0,0,0,.1)"></div>`;
+  }
+
+  // Legende
+  const legende = Object.entries(farbMap).map(([name, color]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:11px"><span style="width:12px;height:12px;background:${color};border-radius:2px;display:inline-block"></span>${name}</span>`).join('');
+
+  return `<div class="draufsicht-container">
+    <div style="font-size:13px;font-weight:600;margin-bottom:8px">Draufsicht ${empfehlung.name} (${(lkwLaenge / 1000).toFixed(1)}m x 2.45m)</div>
+    <div style="position:relative;width:${containerW + kabineW + 4}px;height:${containerH}px;border:2px solid #333;border-radius:4px;background:#fff;overflow:hidden">
+      <img src="munz.jpg" style="position:absolute;left:0;top:0;width:${kabineW}px;height:${containerH}px;object-fit:cover;border-right:2px solid #333">
+      ${palletsHtml}
+      ${meter}
+    </div>
+    <div style="margin-top:8px">${legende}</div>
+  </div>`;
+}
+
+// ===================== KUNDEN =====================
+
+async function loadKunden() {
+  const data = await api('/api/kunden');
+  const container = document.getElementById('page-kunden');
+
+  container.innerHTML = `<div class="card">
+    <div class="card-header">
+      <span>Kunden</span>
+      <button class="btn btn-primary btn-sm" onclick="openKundeModal()">+ Neuer Kunde</button>
+    </div>
+    <table>
+      <thead><tr><th>Name</th><th>Ort</th><th>Telefon</th><th>Notizen</th><th>Aktionen</th></tr></thead>
+      <tbody>
+        ${Array.isArray(data) && data.length ? data.map(k => `<tr>
+          <td><strong>${esc(k.name)}</strong></td>
+          <td>${esc(k.ort || '—')}</td>
+          <td>${esc(k.telefon || '—')}</td>
+          <td>${esc(k.notizen || '—')}</td>
+          <td>
+            <button class="btn btn-sm btn-outline" onclick="openKundeModal(${k.id}, '${esc(k.name)}', '${esc(k.ort || '')}', '${esc(k.telefon || '')}', '${esc(k.notizen || '')}')">Bearbeiten</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteKunde(${k.id})">X</button>
+          </td>
+        </tr>`).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">Keine Kunden</td></tr>'}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function openKundeModal(id, name, ort, telefon, notizen) {
+  openModal(`
+    <h3>${id ? 'Kunde bearbeiten' : 'Neuer Kunde'}</h3>
+    <div class="form-row">
+      <div class="form-group flex1"><label>Name</label><input type="text" id="kf-name" value="${name || ''}"></div>
+      <div class="form-group flex1"><label>Ort</label><input type="text" id="kf-ort" value="${ort || ''}"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group flex1"><label>Telefon</label><input type="text" id="kf-telefon" value="${telefon || ''}"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group flex1"><label>Notizen</label><textarea id="kf-notizen" rows="2" style="width:100%">${notizen || ''}</textarea></div>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-outline" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="saveKunde(${id || 'null'})">${id ? 'Speichern' : 'Anlegen'}</button>
+    </div>
+  `);
+}
+
+async function saveKunde(id) {
+  const body = {
+    name: document.getElementById('kf-name').value,
+    ort: document.getElementById('kf-ort').value,
+    telefon: document.getElementById('kf-telefon').value,
+    notizen: document.getElementById('kf-notizen').value,
+  };
+  if (!body.name) { showFeedback('Name erforderlich', 'error'); return; }
+
+  const method = id ? 'PUT' : 'POST';
+  const url = id ? `/api/kunden/${id}` : '/api/kunden';
+  const r = await api(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (r.ok || r.id) {
+    closeModal();
+    showFeedback(id ? 'Kunde gespeichert' : 'Kunde angelegt');
+    loadKunden();
+  } else {
+    showFeedback(r.error || 'Fehler', 'error');
+  }
+}
+
+async function deleteKunde(id) {
+  if (!confirm('Kunde wirklich löschen?')) return;
+  await api(`/api/kunden/${id}`, { method: 'DELETE' });
+  showFeedback('Kunde gelöscht');
+  loadKunden();
+}
+
+// ===================== LKW-TYPEN =====================
+
+async function loadLkwTypen() {
+  const data = await api('/api/lkw-typen');
+  const container = document.getElementById('page-lkw-typen');
+
+  container.innerHTML = `<div class="card">
+    <div class="card-header">
+      <span>LKW-Typen</span>
+      <button class="btn btn-primary btn-sm" onclick="addLkwTyp()">+ Neuer LKW-Typ</button>
+    </div>
+    <table>
+      <thead><tr><th>Name</th><th>Ladelänge (mm)</th><th>Breite (mm)</th><th>Höhe (mm)</th><th>Max. Gewicht (kg)</th><th>Sort.</th><th>Aktiv</th><th>Aktionen</th></tr></thead>
+      <tbody>
+        ${Array.isArray(data) ? data.map(l => `<tr data-lkw-id="${l.id}">
+          <td><input type="text" data-field="name" value="${esc(l.name)}" style="width:140px"></td>
+          <td><input type="number" data-field="laenge" value="${l.laenge}" style="width:90px"></td>
+          <td><input type="number" data-field="breite" value="${l.breite}" style="width:80px"></td>
+          <td><input type="number" data-field="hoehe" value="${l.hoehe || 2700}" style="width:80px"></td>
+          <td><input type="number" data-field="max_gewicht" value="${l.max_gewicht || ''}" style="width:90px" placeholder="optional"></td>
+          <td><input type="number" data-field="sortierung" value="${l.sortierung || 0}" style="width:50px"></td>
+          <td><input type="checkbox" data-field="aktiv" ${l.aktiv ? 'checked' : ''}></td>
+          <td>
+            <button class="btn btn-sm btn-primary" onclick="saveLkwTyp(${l.id})">Speichern</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteLkwTyp(${l.id})">X</button>
+          </td>
+        </tr>`).join('') : ''}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+async function saveLkwTyp(id) {
+  const row = document.querySelector(`tr[data-lkw-id="${id}"]`);
+  const data = {};
+  row.querySelectorAll('input').forEach(inp => {
+    const field = inp.dataset.field;
+    if (!field) return;
+    if (inp.type === 'checkbox') data[field] = inp.checked ? 1 : 0;
+    else data[field] = inp.value;
+  });
+  const r = await api(`/api/lkw-typen/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  if (r.ok) { showFeedback('LKW-Typ gespeichert'); loadLkwTypen(); }
+  else showFeedback(r.error || 'Fehler', 'error');
+}
+
+async function deleteLkwTyp(id) {
+  if (!confirm('LKW-Typ wirklich löschen?')) return;
+  await api(`/api/lkw-typen/${id}`, { method: 'DELETE' });
+  showFeedback('LKW-Typ gelöscht');
+  loadLkwTypen();
+}
+
+async function addLkwTyp() {
+  const r = await api('/api/lkw-typen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Neuer LKW', laenge: 6000, breite: 2450, hoehe: 2700, max_gewicht: 5000, sortierung: 99 }) });
+  if (r.ok) { showFeedback('LKW-Typ angelegt'); loadLkwTypen(); }
+}
+
+// ===================== PALETTEN-TYPEN =====================
+
+async function loadPalettenTypen() {
+  const data = await api('/api/paletten-typen');
+  const container = document.getElementById('page-paletten-typen');
+
+  container.innerHTML = `<div class="card">
+    <div class="card-header">
+      <span>Palettentypen</span>
+      <button class="btn btn-primary btn-sm" onclick="addPalettenTyp()">+ Neuer Palettentyp</button>
+    </div>
+    <table>
+      <thead><tr><th>Name</th><th>Länge (mm)</th><th>Breite (mm)</th><th>Höhe (mm)</th><th>Max. Gewicht (kg)</th><th>Sort.</th><th>Aktiv</th><th>Aktionen</th></tr></thead>
+      <tbody>
+        ${Array.isArray(data) ? data.map(p => `<tr data-pt-id="${p.id}">
+          <td><input type="text" data-field="name" value="${esc(p.name)}" style="width:160px"></td>
+          <td><input type="number" data-field="laenge" value="${p.laenge}" style="width:80px"></td>
+          <td><input type="number" data-field="breite" value="${p.breite}" style="width:80px"></td>
+          <td><input type="number" data-field="hoehe" value="${p.hoehe || 144}" style="width:80px"></td>
+          <td><input type="number" data-field="max_gewicht" value="${p.max_gewicht || ''}" style="width:90px" placeholder="optional"></td>
+          <td><input type="number" data-field="sortierung" value="${p.sortierung || 0}" style="width:50px"></td>
+          <td><input type="checkbox" data-field="aktiv" ${p.aktiv ? 'checked' : ''}></td>
+          <td>
+            <button class="btn btn-sm btn-primary" onclick="savePalettenTyp(${p.id})">Speichern</button>
+            <button class="btn btn-sm btn-danger" onclick="deletePalettenTyp(${p.id})">X</button>
+          </td>
+        </tr>`).join('') : ''}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+async function savePalettenTyp(id) {
+  const row = document.querySelector(`tr[data-pt-id="${id}"]`);
+  const data = {};
+  row.querySelectorAll('input').forEach(inp => {
+    const field = inp.dataset.field;
+    if (!field) return;
+    if (inp.type === 'checkbox') data[field] = inp.checked ? 1 : 0;
+    else data[field] = inp.value;
+  });
+  const r = await api(`/api/paletten-typen/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  if (r.ok) { showFeedback('Palettentyp gespeichert'); loadPalettenTypen(); }
+  else showFeedback(r.error || 'Fehler', 'error');
+}
+
+async function deletePalettenTyp(id) {
+  if (!confirm('Palettentyp wirklich löschen?')) return;
+  await api(`/api/paletten-typen/${id}`, { method: 'DELETE' });
+  showFeedback('Palettentyp gelöscht');
+  loadPalettenTypen();
+}
+
+async function addPalettenTyp() {
+  const r = await api('/api/paletten-typen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Neue Palette', laenge: 1200, breite: 800, hoehe: 144, sortierung: 99 }) });
+  if (r.ok) { showFeedback('Palettentyp angelegt'); loadPalettenTypen(); }
+}
+
+// ===================== HELPERS =====================
+
+function formatDate(d) {
+  if (!d) return '—';
+  const parts = d.split('-');
+  if (parts.length === 3) return `${parts[2]}.${parts[1]}.${parts[0]}`;
+  return d;
+}
+
+// ===================== INIT =====================
+loadAuftraege();
