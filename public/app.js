@@ -682,7 +682,7 @@ let lastPackData = null;
 
 function renderPackResult(data) {
   lastPackData = data;
-  const { reihen, gesamtLaenge, gesamtGewicht, gesamtAnzahl, empfehlung, warnungen, lkwTypen } = data;
+  const { reihen, gesamtLaenge, gesamtBreite, gesamtGewicht, gesamtAnzahl, empfehlung, warnungen, lkwTypen } = data;
 
   let html = '<div class="card"><div class="card-header">Packberechnung</div>';
 
@@ -698,13 +698,14 @@ function renderPackResult(data) {
   html += `<div class="stats-row">
     <div class="stat-card"><div class="stat-value">${gesamtAnzahl}</div><div class="stat-label">Paletten</div></div>
     <div class="stat-card"><div class="stat-value">${(gesamtLaenge / 1000).toFixed(1)}m</div><div class="stat-label">Ladelänge</div></div>
+    <div class="stat-card"><div class="stat-value">${gesamtBreite ? (gesamtBreite / 1000).toFixed(2) + 'm' : '—'}</div><div class="stat-label">Ladebreite</div></div>
     <div class="stat-card"><div class="stat-value">${gesamtGewicht}kg</div><div class="stat-label">Gewicht</div></div>
     <div class="stat-card"><div class="stat-value">${empfehlung ? empfehlung.name : '—'}</div><div class="stat-label">Empfehlung</div></div>
   </div>`;
 
   // Auslastungsbalken + LKW-Auswahl
   const activeLkw = empfehlung || { name: '—', laenge: 0 };
-  html += renderLkwSection(activeLkw, gesamtLaenge, gesamtGewicht, lkwTypen, null);
+  html += renderLkwSection(activeLkw, gesamtLaenge, gesamtGewicht, gesamtBreite);
 
   // Draufsicht
   if (empfehlung && reihen.length) {
@@ -728,21 +729,31 @@ function renderPackResult(data) {
   document.getElementById('dispo-result').innerHTML = html;
 }
 
-function renderLkwSection(lkw, gesamtLaenge, gesamtGewicht, lkwTypen, targetEl) {
-  const pct = lkw.laenge ? Math.round(gesamtLaenge / lkw.laenge * 100) : 0;
-  const color = pct > 100 ? 'var(--rot)' : pct > 90 ? 'var(--gelb)' : 'var(--gruen)';
+function renderLkwSection(lkw, gesamtLaenge, gesamtGewicht, gesamtBreite) {
+  const pctL = lkw.laenge ? Math.round(gesamtLaenge / lkw.laenge * 100) : 0;
+  const colorL = pctL > 100 ? 'var(--rot)' : pctL > 90 ? 'var(--gelb)' : 'var(--gruen)';
+  const pctB = lkw.breite ? Math.round((gesamtBreite || 0) / lkw.breite * 100) : 0;
+  const colorB = pctB > 100 ? 'var(--rot)' : pctB > 90 ? 'var(--gelb)' : 'var(--gruen)';
   const gewichtOver = lkw.max_gewicht && gesamtGewicht > lkw.max_gewicht;
 
   let html = `<div style="margin-bottom:16px">
     <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
-      <span>${esc(lkw.name)} (${(lkw.laenge / 1000).toFixed(1)}m)</span>
-      <span>${pct}% Auslastung${lkw.max_gewicht ? ' — ' + gesamtGewicht + '/' + lkw.max_gewicht + 'kg' : ''}</span>
+      <span>${esc(lkw.name)} — Länge (${(lkw.laenge / 1000).toFixed(1)}m)</span>
+      <span>${pctL}% Auslastung${lkw.max_gewicht ? ' — ' + gesamtGewicht + '/' + lkw.max_gewicht + 'kg' : ''}</span>
     </div>
     <div style="background:#e0e0e0;border-radius:4px;height:16px;overflow:hidden">
-      <div style="background:${color};height:100%;width:${Math.min(pct, 100)}%;border-radius:4px;transition:width .3s"></div>
+      <div style="background:${colorL};height:100%;width:${Math.min(pctL, 100)}%;border-radius:4px;transition:width .3s"></div>
     </div>
+    ${pctL > 100 ? '<div style="color:var(--rot);font-weight:700;margin-top:4px">&#9888; Ladelänge überschritten!</div>' : ''}
+    <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;margin-top:8px">
+      <span>Breite (${(lkw.breite / 1000).toFixed(2)}m)</span>
+      <span>${pctB}%</span>
+    </div>
+    <div style="background:#e0e0e0;border-radius:4px;height:10px;overflow:hidden">
+      <div style="background:${colorB};height:100%;width:${Math.min(pctB, 100)}%;border-radius:4px;transition:width .3s"></div>
+    </div>
+    ${pctB > 100 ? '<div style="color:var(--rot);font-weight:700;margin-top:4px">&#9888; Ladebreite überschritten!</div>' : ''}
     ${gewichtOver ? '<div style="color:var(--rot);font-weight:700;margin-top:4px">&#9888; Gewicht überschritten!</div>' : ''}
-    ${pct > 100 ? '<div style="color:var(--rot);font-weight:700;margin-top:4px">&#9888; Ladelänge überschritten!</div>' : ''}
   </div>`;
   return html;
 }
@@ -756,12 +767,13 @@ function vergleicheLkw() {
   const lkw = lastPackData.lkwTypen.find(l => l.id === lkwId);
   if (!lkw) return;
 
-  const { gesamtLaenge, gesamtGewicht, gesamtAnzahl, reihen } = lastPackData;
+  const { gesamtLaenge, gesamtBreite, gesamtGewicht, gesamtAnzahl, reihen } = lastPackData;
   const resultDiv = document.getElementById('lkw-vergleich-result');
 
   const pct = Math.round(gesamtLaenge / lkw.laenge * 100);
   const gewichtOver = lkw.max_gewicht && gesamtGewicht > lkw.max_gewicht;
   const laengeOver = gesamtLaenge > lkw.laenge;
+  const breiteOver = gesamtBreite > lkw.breite;
 
   let html = '<div style="margin-top:12px">';
 
@@ -770,6 +782,10 @@ function vergleicheLkw() {
   if (laengeOver) {
     const diff = Math.round(gesamtLaenge - lkw.laenge);
     probleme.push(`Ladelänge: ${(gesamtLaenge/1000).toFixed(1)}m benötigt, aber nur ${(lkw.laenge/1000).toFixed(1)}m verfügbar (${diff}mm zu lang)`);
+  }
+  if (breiteOver) {
+    const diff = Math.round(gesamtBreite - lkw.breite);
+    probleme.push(`Ladebreite: ${(gesamtBreite/1000).toFixed(2)}m benötigt, aber nur ${(lkw.breite/1000).toFixed(2)}m verfügbar (${diff}mm zu breit)`);
   }
   if (gewichtOver) {
     const diff = Math.round(gesamtGewicht - lkw.max_gewicht);
@@ -788,8 +804,8 @@ function vergleicheLkw() {
   }
 
   // Auslastungsbalken
-  const empf = { name: lkw.name, laenge: lkw.laenge, max_gewicht: lkw.max_gewicht };
-  html += renderLkwSection(empf, gesamtLaenge, gesamtGewicht);
+  const empf = { name: lkw.name, laenge: lkw.laenge, breite: lkw.breite, max_gewicht: lkw.max_gewicht };
+  html += renderLkwSection(empf, gesamtLaenge, gesamtGewicht, gesamtBreite);
 
   // Draufsicht mit diesem LKW
   if (reihen && reihen.length) {
@@ -802,7 +818,7 @@ function vergleicheLkw() {
 
 function renderDraufsicht(reihen, empfehlung) {
   const lkwLaenge = empfehlung.laenge;
-  const lkwBreite = 2450;
+  const lkwBreite = empfehlung.breite || 2450;
   const kabineW = 40;
   const containerW = 700;
   const scale = containerW / lkwLaenge;

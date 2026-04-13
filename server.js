@@ -384,6 +384,7 @@ app.post('/api/disposition/packen', (req, res) => {
   for (const r of reihen) r.paletten.sort((a, b) => a._y - b._y);
 
   const gesamtLaenge = placed.length ? Math.max(...placed.map(p => p.x + p.laenge)) + ABSTAND : 0;
+  const gesamtBreite = placed.length ? Math.max(...placed.map(p => p.y + p.breite)) : 0;
   const gesamtGewicht = allePaletten.reduce((s, p) => s + p.gewicht, 0);
   const gesamtAnzahl = allePaletten.length;
 
@@ -391,10 +392,10 @@ app.post('/api/disposition/packen', (req, res) => {
   const lkwTypen = dbAll("SELECT * FROM lkw_typen WHERE aktiv = 1 ORDER BY sortierung, laenge");
   let empfehlung = null;
   for (const lkw of lkwTypen) {
-    if (lkw.laenge >= gesamtLaenge) {
+    if (lkw.laenge >= gesamtLaenge && lkw.breite >= gesamtBreite) {
       const gewichtOk = !lkw.max_gewicht || !gesamtGewicht || gesamtGewicht <= lkw.max_gewicht;
       empfehlung = {
-        name: lkw.name, laenge: lkw.laenge,
+        name: lkw.name, laenge: lkw.laenge, breite: lkw.breite,
         auslastung: Math.round(gesamtLaenge / lkw.laenge * 100),
         max_gewicht: lkw.max_gewicht || null,
         gewichtUeberschritten: !gewichtOk
@@ -407,14 +408,14 @@ app.post('/api/disposition/packen', (req, res) => {
     const biggest = lkwTypen[lkwTypen.length - 1];
     const anzahl = Math.ceil(gesamtLaenge / biggest.laenge);
     empfehlung = {
-      name: `${anzahl}x ${biggest.name}`, laenge: biggest.laenge * anzahl,
+      name: `${anzahl}x ${biggest.name}`, laenge: biggest.laenge * anzahl, breite: biggest.breite,
       auslastung: Math.round(gesamtLaenge / (biggest.laenge * anzahl) * 100),
       max_gewicht: biggest.max_gewicht ? biggest.max_gewicht * anzahl : null,
       gewichtUeberschritten: biggest.max_gewicht && gesamtGewicht > biggest.max_gewicht * anzahl
     };
   }
 
-  res.json({ reihen, gesamtLaenge, gesamtGewicht: Math.round(gesamtGewicht * 10) / 10, gesamtAnzahl, empfehlung, lkwTypen, warnungen });
+  res.json({ reihen, gesamtLaenge, gesamtBreite, gesamtGewicht: Math.round(gesamtGewicht * 10) / 10, gesamtAnzahl, empfehlung, lkwTypen, warnungen });
 });
 
 // ===================== KM-BERECHNUNG =====================
