@@ -290,6 +290,7 @@ app.post('/api/disposition/packen', (req, res) => {
   // Freie Rechtecke: [{x, y, w, h}] — w = Tiefe (Längsrichtung), h = Breite
   const freeRects = [{ x: 0, y: 0, w: 100000, h: LKW_BREITE }];
   const placed = []; // {pal, x, y, laenge, breite}
+  const warnungen = [];
 
   for (const pal of allePaletten) {
     // Beste freie Stelle finden (Best Short Side Fit)
@@ -313,7 +314,21 @@ app.post('/api/disposition/packen', (req, res) => {
       }
     }
 
-    if (bestIdx === -1) continue; // Sollte nicht passieren
+    if (bestIdx === -1) {
+      // Grund ermitteln warum Palette nicht passt
+      const name = pal.name || 'Palette';
+      if (pal.breite > LKW_BREITE && pal.laenge > LKW_BREITE) {
+        warnungen.push(`${name} (${pal.laenge}x${pal.breite}mm): Beide Seiten breiter als LKW (${LKW_BREITE}mm) — passt nicht auf die Ladefläche`);
+      } else if (Math.min(pal.breite, pal.laenge) > LKW_BREITE) {
+        warnungen.push(`${name} (${pal.laenge}x${pal.breite}mm): Schmalste Seite ${Math.min(pal.breite, pal.laenge)}mm > LKW-Breite ${LKW_BREITE}mm — passt nicht`);
+      } else {
+        // Passt grundsätzlich, aber kein Platz mehr frei
+        const bestFreeW = freeRects.reduce((m, r) => Math.max(m, r.w), 0);
+        const bestFreeH = freeRects.reduce((m, r) => Math.max(m, r.h), 0);
+        warnungen.push(`${name} (${pal.laenge}x${pal.breite}mm): Kein Platz mehr frei — größte Lücke: ${bestFreeW}mm Tiefe x ${bestFreeH}mm Breite`);
+      }
+      continue;
+    }
 
     const rect = freeRects[bestIdx];
     const pL = bestRotated ? pal.breite : pal.laenge; // Tiefe auf LKW
@@ -399,7 +414,7 @@ app.post('/api/disposition/packen', (req, res) => {
     };
   }
 
-  res.json({ reihen, gesamtLaenge, gesamtGewicht: Math.round(gesamtGewicht * 10) / 10, gesamtAnzahl, empfehlung, lkwTypen });
+  res.json({ reihen, gesamtLaenge, gesamtGewicht: Math.round(gesamtGewicht * 10) / 10, gesamtAnzahl, empfehlung, lkwTypen, warnungen });
 });
 
 // ===================== KM-BERECHNUNG =====================

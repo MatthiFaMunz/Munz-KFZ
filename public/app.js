@@ -679,9 +679,17 @@ async function berechnePackung() {
 }
 
 function renderPackResult(data) {
-  const { reihen, gesamtLaenge, gesamtGewicht, gesamtAnzahl, empfehlung } = data;
+  const { reihen, gesamtLaenge, gesamtGewicht, gesamtAnzahl, empfehlung, warnungen } = data;
 
   let html = '<div class="card"><div class="card-header">Packberechnung</div>';
+
+  // Warnungen anzeigen
+  if (warnungen && warnungen.length) {
+    html += '<div style="background:#fff3e0;border:1px solid #ff9800;border-left:4px solid #e65100;border-radius:var(--radius);padding:12px;margin-bottom:16px">';
+    html += '<div style="font-weight:700;color:#e65100;margin-bottom:6px">&#9888; Nicht alle Paletten passen:</div>';
+    html += warnungen.map(w => `<div style="font-size:13px;color:#bf360c;padding:2px 0">&bull; ${esc(w)}</div>`).join('');
+    html += '</div>';
+  }
 
   // Zusammenfassung
   html += `<div class="stats-row">
