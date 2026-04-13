@@ -678,8 +678,11 @@ async function berechnePackung() {
   renderPackResult(r);
 }
 
+let lastPackData = null;
+
 function renderPackResult(data) {
-  const { reihen, gesamtLaenge, gesamtGewicht, gesamtAnzahl, empfehlung, warnungen } = data;
+  lastPackData = data;
+  const { reihen, gesamtLaenge, gesamtGewicht, gesamtAnzahl, empfehlung, warnungen, lkwTypen } = data;
 
   let html = '<div class="card"><div class="card-header">Packberechnung</div>';
 
@@ -699,29 +702,102 @@ function renderPackResult(data) {
     <div class="stat-card"><div class="stat-value">${empfehlung ? empfehlung.name : '—'}</div><div class="stat-label">Empfehlung</div></div>
   </div>`;
 
-  // Auslastungsbalken
-  if (empfehlung) {
-    const pct = empfehlung.auslastung;
-    const color = pct > 90 ? 'var(--rot)' : pct > 70 ? 'var(--gelb)' : 'var(--gruen)';
-    html += `<div style="margin-bottom:16px">
-      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
-        <span>${empfehlung.name} (${(empfehlung.laenge / 1000).toFixed(1)}m)</span>
-        <span>${pct}% Auslastung${empfehlung.max_gewicht ? ' — ' + gesamtGewicht + '/' + empfehlung.max_gewicht + 'kg' : ''}</span>
-      </div>
-      <div style="background:#e0e0e0;border-radius:4px;height:16px;overflow:hidden">
-        <div style="background:${color};height:100%;width:${Math.min(pct, 100)}%;border-radius:4px;transition:width .3s"></div>
-      </div>
-      ${empfehlung.gewichtUeberschritten ? '<div style="color:var(--rot);font-weight:700;margin-top:4px">⚠ Gewicht überschritten!</div>' : ''}
-    </div>`;
-  }
+  // Auslastungsbalken + LKW-Auswahl
+  const activeLkw = empfehlung || { name: '—', laenge: 0 };
+  html += renderLkwSection(activeLkw, gesamtLaenge, gesamtGewicht, lkwTypen, null);
 
   // Draufsicht
   if (empfehlung && reihen.length) {
     html += renderDraufsicht(reihen, empfehlung);
   }
 
+  // LKW-Auswahl Dropdown
+  html += `<div style="margin-top:16px;padding:16px;background:#f0f4f8;border-radius:var(--radius)">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <strong style="font-size:14px">Anderen LKW prüfen:</strong>
+      <select id="lkw-vergleich" style="padding:6px 12px;border-radius:var(--radius);border:1px solid var(--border);font-size:13px">
+        <option value="">— LKW wählen —</option>
+        ${(lkwTypen || []).map(l => `<option value="${l.id}">${esc(l.name)} (${(l.laenge/1000).toFixed(1)}m, max ${l.max_gewicht||'?'}kg)</option>`).join('')}
+      </select>
+      <button class="btn btn-sm btn-primary" onclick="vergleicheLkw()">Prüfen</button>
+    </div>
+    <div id="lkw-vergleich-result"></div>
+  </div>`;
+
   html += '</div>';
   document.getElementById('dispo-result').innerHTML = html;
+}
+
+function renderLkwSection(lkw, gesamtLaenge, gesamtGewicht, lkwTypen, targetEl) {
+  const pct = lkw.laenge ? Math.round(gesamtLaenge / lkw.laenge * 100) : 0;
+  const color = pct > 100 ? 'var(--rot)' : pct > 90 ? 'var(--gelb)' : 'var(--gruen)';
+  const gewichtOver = lkw.max_gewicht && gesamtGewicht > lkw.max_gewicht;
+
+  let html = `<div style="margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+      <span>${esc(lkw.name)} (${(lkw.laenge / 1000).toFixed(1)}m)</span>
+      <span>${pct}% Auslastung${lkw.max_gewicht ? ' — ' + gesamtGewicht + '/' + lkw.max_gewicht + 'kg' : ''}</span>
+    </div>
+    <div style="background:#e0e0e0;border-radius:4px;height:16px;overflow:hidden">
+      <div style="background:${color};height:100%;width:${Math.min(pct, 100)}%;border-radius:4px;transition:width .3s"></div>
+    </div>
+    ${gewichtOver ? '<div style="color:var(--rot);font-weight:700;margin-top:4px">&#9888; Gewicht überschritten!</div>' : ''}
+    ${pct > 100 ? '<div style="color:var(--rot);font-weight:700;margin-top:4px">&#9888; Ladelänge überschritten!</div>' : ''}
+  </div>`;
+  return html;
+}
+
+function vergleicheLkw() {
+  if (!lastPackData) return;
+  const sel = document.getElementById('lkw-vergleich');
+  const lkwId = parseInt(sel.value);
+  if (!lkwId) { showFeedback('Bitte LKW auswählen', 'error'); return; }
+
+  const lkw = lastPackData.lkwTypen.find(l => l.id === lkwId);
+  if (!lkw) return;
+
+  const { gesamtLaenge, gesamtGewicht, gesamtAnzahl, reihen } = lastPackData;
+  const resultDiv = document.getElementById('lkw-vergleich-result');
+
+  const pct = Math.round(gesamtLaenge / lkw.laenge * 100);
+  const gewichtOver = lkw.max_gewicht && gesamtGewicht > lkw.max_gewicht;
+  const laengeOver = gesamtLaenge > lkw.laenge;
+
+  let html = '<div style="margin-top:12px">';
+
+  // Probleme sammeln
+  const probleme = [];
+  if (laengeOver) {
+    const diff = Math.round(gesamtLaenge - lkw.laenge);
+    probleme.push(`Ladelänge: ${(gesamtLaenge/1000).toFixed(1)}m benötigt, aber nur ${(lkw.laenge/1000).toFixed(1)}m verfügbar (${diff}mm zu lang)`);
+  }
+  if (gewichtOver) {
+    const diff = Math.round(gesamtGewicht - lkw.max_gewicht);
+    probleme.push(`Gewicht: ${gesamtGewicht}kg benötigt, aber max. ${lkw.max_gewicht}kg erlaubt (${diff}kg zu schwer)`);
+  }
+
+  if (probleme.length) {
+    html += '<div style="background:#ffebee;border:1px solid #ef5350;border-left:4px solid #c62828;border-radius:var(--radius);padding:12px;margin-bottom:12px">';
+    html += `<div style="font-weight:700;color:#c62828;margin-bottom:6px">&#10060; ${esc(lkw.name)} passt nicht:</div>`;
+    html += probleme.map(p => `<div style="font-size:13px;color:#b71c1c;padding:2px 0">&bull; ${esc(p)}</div>`).join('');
+    html += '</div>';
+  } else {
+    html += '<div style="background:#e8f5e9;border:1px solid #66bb6a;border-left:4px solid #2e7d32;border-radius:var(--radius);padding:12px;margin-bottom:12px">';
+    html += `<div style="font-weight:700;color:#2e7d32">&#10004; ${esc(lkw.name)} passt!</div>`;
+    html += '</div>';
+  }
+
+  // Auslastungsbalken
+  const empf = { name: lkw.name, laenge: lkw.laenge, max_gewicht: lkw.max_gewicht };
+  html += renderLkwSection(empf, gesamtLaenge, gesamtGewicht);
+
+  // Draufsicht mit diesem LKW
+  if (reihen && reihen.length) {
+    html += renderDraufsicht(reihen, empf);
+  }
+
+  html += '</div>';
+  resultDiv.innerHTML = html;
 }
 
 function renderDraufsicht(reihen, empfehlung) {
