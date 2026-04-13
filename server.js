@@ -321,15 +321,36 @@ app.post('/api/disposition/packen', (req, res) => {
 
     placed.push({ pal, x: rect.x, y: rect.y, laenge: pL, breite: pB });
 
-    // Free-Rect aufteilen (Guillotine-Split)
+    // Free-Rect aufteilen (Maximal Rectangles Split)
     freeRects.splice(bestIdx, 1);
-    // Rechts daneben (restliche Tiefe)
+    // Rechts daneben (volle Breite des Originals)
     if (rect.w - pL - ABSTAND > 0) {
-      freeRects.push({ x: rect.x + pL + ABSTAND, y: rect.y, w: rect.w - pL - ABSTAND, h: pB });
+      freeRects.push({ x: rect.x + pL + ABSTAND, y: rect.y, w: rect.w - pL - ABSTAND, h: rect.h });
     }
-    // Darunter (restliche Breite)
+    // Darunter (volle Tiefe des Originals)
     if (rect.h - pB > 0) {
       freeRects.push({ x: rect.x, y: rect.y + pB, w: rect.w, h: rect.h - pB });
+    }
+
+    // Überlappende Rects bereinigen: Neue Rects können sich überlappen,
+    // daher bei jeder Platzierung alle Rects gegen die platzierte Palette clippen
+    const px1 = rect.x, py1 = rect.y, px2 = rect.x + pL, py2 = rect.y + pB;
+    for (let ri = freeRects.length - 1; ri >= 0; ri--) {
+      const r = freeRects[ri];
+      const rx2 = r.x + r.w, ry2 = r.y + r.h;
+      // Prüfen ob Rect mit platzierter Palette überlappt
+      if (r.x < px2 + ABSTAND && rx2 > px1 && r.y < py2 && ry2 > py1) {
+        const splits = [];
+        // Links
+        if (r.x < px1) splits.push({ x: r.x, y: r.y, w: px1 - r.x - ABSTAND, h: r.h });
+        // Rechts
+        if (rx2 > px2 + ABSTAND) splits.push({ x: px2 + ABSTAND, y: r.y, w: rx2 - px2 - ABSTAND, h: r.h });
+        // Oben
+        if (r.y < py1) splits.push({ x: r.x, y: r.y, w: r.w, h: py1 - r.y });
+        // Unten
+        if (ry2 > py2) splits.push({ x: r.x, y: py2, w: r.w, h: ry2 - py2 });
+        freeRects.splice(ri, 1, ...splits.filter(s => s.w > 0 && s.h > 0));
+      }
     }
   }
 
