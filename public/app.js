@@ -29,6 +29,9 @@ function openModal(html) {
 
 function closeModal() {
   document.getElementById('modal-overlay').classList.remove('active');
+  // Karte aufräumen
+  if (kmMap) { kmMap.remove(); kmMap = null; kmMapLayers = []; }
+  ortCoords = { abholung: null, lieferung: null };
 }
 
 document.getElementById('modal-overlay').addEventListener('click', (e) => {
@@ -94,7 +97,7 @@ async function loadAuftraege() {
       <table>
         <thead><tr>
           <th>Nr.</th><th>Datum</th><th>Kunde</th><th>Abholung</th><th>Lieferung</th>
-          <th>Positionen</th><th>Transport</th><th>Status</th><th>Aktionen</th>
+          <th>Positionen</th><th>KM</th><th>Transport</th><th>Status</th><th>Aktionen</th>
         </tr></thead>
         <tbody>
           ${Array.isArray(data) && data.length ? data.map(a => `
@@ -104,7 +107,8 @@ async function loadAuftraege() {
               <td>${esc(a.display_name)}</td>
               <td>${esc(a.abholung_ort || '—')}</td>
               <td>${esc(a.lieferung_ort || '—')}</td>
-              <td>${a.positionen ? a.positionen.map(p => `${p.anzahl}x ${esc(p.typ_name || p.paletten_typ_name || 'Palette')}`).join(', ') : '—'}</td>
+              <td>${a.positionen ? a.positionen.map(p => { const name = p.typ_name || p.paletten_typ_name || 'Palette'; const masse = !p.typ_name && p.laenge_mm && p.breite_mm ? ` (${p.laenge_mm}x${p.breite_mm})` : ''; return `${p.anzahl}x ${esc(name)}${masse}`; }).join(', ') : '—'}</td>
+              <td style="white-space:nowrap;font-weight:${a.km_gesamt ? '600' : '400'};color:${a.km_gesamt ? 'var(--primary)' : 'var(--text-muted)'}">${a.km_gesamt ? a.km_gesamt + ' km' : '—'}</td>
               <td>
                 ${transportBadge(a.transport_art)}
                 ${a.gefahrgut ? '<span class="gefahrgut-badge">ADR</span>' : ''}
@@ -115,7 +119,7 @@ async function loadAuftraege() {
                 <button class="btn btn-sm btn-danger" onclick="deleteAuftrag(${a.id})">X</button>
               </td>
             </tr>
-          `).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--text-muted)">Keine Aufträge</td></tr>'}
+          `).join('') : '<tr><td colspan="10" style="text-align:center;color:var(--text-muted)">Keine Aufträge</td></tr>'}
         </tbody>
       </table>
     </div>`;
@@ -172,13 +176,15 @@ async function openAuftragModal(id) {
         <label>Abholdatum</label>
         <input type="date" id="af-abholung-datum" value="${a?.abholung_datum || today}">
       </div>
-      <div class="form-group flex1">
-        <label>Abholort</label>
-        <input type="text" id="af-abholung-ort" value="${esc(a?.abholung_ort || '')}">
+      <div class="form-group flex1 autocomplete-wrapper">
+        <label>Abholort (Ladestelle)</label>
+        <input type="text" id="af-abholung-ort" value="${esc(a?.abholung_ort || '')}" placeholder="Ort oder PLZ eingeben..." oninput="ortAutocomplete(this, 'ac-abholung')" autocomplete="off">
+        <div id="ac-abholung" class="ort-ac-list" style="display:none"></div>
       </div>
-      <div class="form-group flex1">
-        <label>Lieferort</label>
-        <input type="text" id="af-lieferung-ort" value="${esc(a?.lieferung_ort || '')}">
+      <div class="form-group flex1 autocomplete-wrapper">
+        <label>Lieferort (Entladestelle)</label>
+        <input type="text" id="af-lieferung-ort" value="${esc(a?.lieferung_ort || '')}" placeholder="Ort oder PLZ eingeben..." oninput="ortAutocomplete(this, 'ac-lieferung')" autocomplete="off">
+        <div id="ac-lieferung" class="ort-ac-list" style="display:none"></div>
       </div>
     </div>
     <div class="form-row">
@@ -194,6 +200,27 @@ async function openAuftragModal(id) {
         <label style="display:inline"><input type="checkbox" id="af-gefahrgut" ${a?.gefahrgut ? 'checked' : ''}> Gefahrgut (ADR)</label>
       </div>
     </div>
+
+    <div style="margin:12px 0;padding:12px;background:#f0f4f8;border-radius:var(--radius);border-left:4px solid var(--primary)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <strong style="font-size:14px">KM-Berechnung</strong>
+        <button class="btn btn-sm btn-primary" onclick="berechneKm()" id="km-btn">Berechnen</button>
+      </div>
+      <div id="km-result">${a?.km_gesamt ? renderKmResult({
+        anfahrt: a.km_anfahrt ? { km: a.km_anfahrt } : null,
+        hauptstrecke: a.km_hauptstrecke ? { km: a.km_hauptstrecke } : null,
+        rueckfahrt: a.km_rueckfahrt ? { km: a.km_rueckfahrt } : null,
+        gesamt_km: a.km_gesamt,
+        gesamt_minuten: a.km_minuten
+      }) : '<span style="color:var(--text-muted);font-size:13px">Abholort und Lieferort eingeben, dann berechnen</span>'}</div>
+      <div id="km-map"></div>
+      <input type="hidden" id="af-km-anfahrt" value="${a?.km_anfahrt || 0}">
+      <input type="hidden" id="af-km-hauptstrecke" value="${a?.km_hauptstrecke || 0}">
+      <input type="hidden" id="af-km-rueckfahrt" value="${a?.km_rueckfahrt || 0}">
+      <input type="hidden" id="af-km-gesamt" value="${a?.km_gesamt || 0}">
+      <input type="hidden" id="af-km-minuten" value="${a?.km_minuten || 0}">
+    </div>
+
     <div class="form-row">
       <div class="form-group flex1">
         <label>Notizen</label>
@@ -236,6 +263,11 @@ function addPositionRow(p = null) {
         ${palettenTypenCache.filter(t => t.aktiv).map(t => `<option value="${t.id}" ${p?.paletten_typ_id == t.id ? 'selected' : ''}>${esc(t.name)} (${t.laenge}x${t.breite})</option>`).join('')}
       </select>
       <input type="text" class="pos-typ-name" placeholder="oder Freitext..." value="${esc(p?.paletten_typ_name || '')}" style="margin-top:4px;${p?.paletten_typ_id ? 'display:none' : ''}">
+      <div class="pos-freitext-masse" style="display:${p?.paletten_typ_id ? 'none' : 'flex'};gap:4px;margin-top:4px;align-items:center">
+        <input type="number" class="pos-laenge" value="${p?.laenge_mm || ''}" placeholder="Länge" style="width:70px" min="1"> x
+        <input type="number" class="pos-breite" value="${p?.breite_mm || ''}" placeholder="Breite" style="width:70px" min="1">
+        <span style="font-size:11px;color:var(--text-muted)">mm</span>
+      </div>
     </td>
     <td><input type="number" class="pos-anzahl" value="${p?.anzahl || 1}" min="1"></td>
     <td><input type="number" class="pos-gewicht" value="${p?.gewicht_kg || ''}" step="0.1" placeholder="kg"></td>
@@ -247,10 +279,268 @@ function addPositionRow(p = null) {
   tbody.appendChild(tr);
 }
 
+// ===================== ORT-AUTOCOMPLETE =====================
+
+let ortAcTimer = null;
+let ortCoords = { abholung: null, lieferung: null };
+let kmMap = null;
+let kmMapLayers = [];
+
+async function ortAutocomplete(input, listId) {
+  const val = input.value.trim();
+  const listEl = document.getElementById(listId);
+
+  if (val.length < 2) { listEl.style.display = 'none'; return; }
+
+  clearTimeout(ortAcTimer);
+  ortAcTimer = setTimeout(async () => {
+    listEl.innerHTML = '<div class="ort-ac-loading">Suche...</div>';
+    listEl.style.display = 'block';
+
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val)}&limit=6&addressdetails=1&countrycodes=de,at,ch,fr,it,nl,be,lu,pl,cz`;
+      const r = await fetch(url, { headers: { 'User-Agent': 'Munz-KFZ-Dispo/1.0' } });
+      const data = await r.json();
+
+      if (!data.length) {
+        listEl.innerHTML = '<div class="ort-ac-loading">Keine Ergebnisse</div>';
+        return;
+      }
+
+      listEl.innerHTML = data.map((item, i) => {
+        const addr = item.address || {};
+        const main = [addr.road, addr.house_number].filter(Boolean).join(' ') || addr.town || addr.city || addr.village || item.display_name.split(',')[0];
+        const detail = [addr.postcode, addr.town || addr.city || addr.village || addr.municipality, addr.state, addr.country].filter(Boolean).join(', ');
+        const icon = item.type === 'city' || item.type === 'town' ? '🏙' : item.type === 'village' ? '🏘' : '📍';
+        return `<div class="ort-ac-item" onclick="selectOrt('${input.id}', '${listId}', ${i})" data-lat="${item.lat}" data-lon="${item.lon}" data-display="${esc(item.display_name)}">
+          <span class="ort-ac-icon">${icon}</span>
+          <div class="ort-ac-text">
+            <div class="ort-ac-main">${esc(main)}</div>
+            <div class="ort-ac-detail">${esc(detail)}</div>
+          </div>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      listEl.innerHTML = '<div class="ort-ac-loading">Fehler bei Suche</div>';
+    }
+  }, 350);
+}
+
+function selectOrt(inputId, listId, idx) {
+  const listEl = document.getElementById(listId);
+  const item = listEl.querySelectorAll('.ort-ac-item')[idx];
+  if (!item) return;
+
+  const display = item.dataset.display;
+  const lat = parseFloat(item.dataset.lat);
+  const lon = parseFloat(item.dataset.lon);
+
+  document.getElementById(inputId).value = display;
+  listEl.style.display = 'none';
+
+  // Koordinaten speichern
+  const key = inputId.includes('abholung') ? 'abholung' : 'lieferung';
+  ortCoords[key] = { lat, lon, name: display };
+
+  // Wenn beide Orte gesetzt → automatisch berechnen
+  if (ortCoords.abholung && ortCoords.lieferung) {
+    berechneKm();
+  } else {
+    updateMiniMap();
+  }
+}
+
+// Dropdown schließen bei Klick außerhalb
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.autocomplete-wrapper')) {
+    document.querySelectorAll('.ort-ac-list').forEach(l => l.style.display = 'none');
+  }
+});
+
+function updateMiniMap(routeData) {
+  const mapDiv = document.getElementById('km-map');
+  if (!mapDiv) return;
+
+  // Standort Lichtenstein
+  const standort = { lat: 48.4319, lon: 9.2561 };
+  const points = [];
+
+  if (ortCoords.abholung) points.push(ortCoords.abholung);
+  if (ortCoords.lieferung) points.push(ortCoords.lieferung);
+
+  if (!points.length && !routeData) {
+    mapDiv.style.display = 'none';
+    return;
+  }
+
+  mapDiv.style.display = 'block';
+
+  if (!kmMap) {
+    kmMap = L.map('km-map').setView([standort.lat, standort.lon], 8);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap',
+      maxZoom: 18
+    }).addTo(kmMap);
+  }
+
+  // Alte Layer entfernen
+  kmMapLayers.forEach(l => kmMap.removeLayer(l));
+  kmMapLayers = [];
+
+  // Standort-Marker (Lichtenstein)
+  const homeIcon = L.divIcon({ html: '🏠', className: 'leaflet-div-icon', iconSize: [24, 24], iconAnchor: [12, 12] });
+  const homeMarker = L.marker([standort.lat, standort.lon], { icon: homeIcon }).addTo(kmMap).bindTooltip('Lichtenstein (Standort)');
+  kmMapLayers.push(homeMarker);
+
+  const allPoints = [[standort.lat, standort.lon]];
+
+  // Lade-Marker
+  if (ortCoords.abholung) {
+    const ladeIcon = L.divIcon({ html: '<div style="background:#2e7d32;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap">Laden</div>', className: '', iconAnchor: [20, 12] });
+    const m = L.marker([ortCoords.abholung.lat, ortCoords.abholung.lon], { icon: ladeIcon }).addTo(kmMap);
+    kmMapLayers.push(m);
+    allPoints.push([ortCoords.abholung.lat, ortCoords.abholung.lon]);
+  }
+
+  // Entlade-Marker
+  if (ortCoords.lieferung) {
+    const entladeIcon = L.divIcon({ html: '<div style="background:#c62828;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap">Entladen</div>', className: '', iconAnchor: [28, 12] });
+    const m = L.marker([ortCoords.lieferung.lat, ortCoords.lieferung.lon], { icon: entladeIcon }).addTo(kmMap);
+    kmMapLayers.push(m);
+    allPoints.push([ortCoords.lieferung.lat, ortCoords.lieferung.lon]);
+  }
+
+  // Linien zeichnen
+  if (routeData) {
+    // Anfahrt (blau gestrichelt)
+    if (routeData.anfahrt && ortCoords.abholung) {
+      const line = L.polyline([[standort.lat, standort.lon], [ortCoords.abholung.lat, ortCoords.abholung.lon]], { color: '#1565c0', weight: 3, dashArray: '8,6', opacity: 0.7 }).addTo(kmMap);
+      kmMapLayers.push(line);
+    }
+    // Hauptstrecke (grün)
+    if (ortCoords.abholung && ortCoords.lieferung) {
+      const line = L.polyline([[ortCoords.abholung.lat, ortCoords.abholung.lon], [ortCoords.lieferung.lat, ortCoords.lieferung.lon]], { color: '#2e7d32', weight: 4, opacity: 0.9 }).addTo(kmMap);
+      kmMapLayers.push(line);
+    }
+    // Rückfahrt (orange gestrichelt)
+    if (ortCoords.lieferung) {
+      const line = L.polyline([[ortCoords.lieferung.lat, ortCoords.lieferung.lon], [standort.lat, standort.lon]], { color: '#ff6f00', weight: 3, dashArray: '8,6', opacity: 0.7 }).addTo(kmMap);
+      kmMapLayers.push(line);
+    }
+  } else {
+    // Einfache Verbindungslinien
+    if (ortCoords.abholung) {
+      const line = L.polyline([[standort.lat, standort.lon], [ortCoords.abholung.lat, ortCoords.abholung.lon]], { color: '#999', weight: 2, dashArray: '4,4' }).addTo(kmMap);
+      kmMapLayers.push(line);
+    }
+    if (ortCoords.abholung && ortCoords.lieferung) {
+      const line = L.polyline([[ortCoords.abholung.lat, ortCoords.abholung.lon], [ortCoords.lieferung.lat, ortCoords.lieferung.lon]], { color: '#999', weight: 2, dashArray: '4,4' }).addTo(kmMap);
+      kmMapLayers.push(line);
+    }
+  }
+
+  // Karte auf alle Punkte zoomen
+  if (allPoints.length > 1) {
+    kmMap.fitBounds(allPoints, { padding: [30, 30] });
+  } else {
+    kmMap.setView(allPoints[0], 10);
+  }
+
+  // Leaflet braucht manchmal invalidateSize nach DOM-Änderungen
+  setTimeout(() => kmMap.invalidateSize(), 100);
+}
+
+// ===================== KM-BERECHNUNG =====================
+
+function renderKmResult(data) {
+  let html = '<table style="width:100%;font-size:13px;margin:0"><tbody>';
+  if (data.anfahrt) {
+    html += `<tr><td style="padding:3px 0;color:var(--text-muted)">Anfahrt (Lichtenstein → Ladestelle)</td><td style="text-align:right;font-weight:600">${data.anfahrt.km} km${data.anfahrt.minuten ? ' <span style="color:var(--text-muted);font-weight:400">(' + formatMinuten(data.anfahrt.minuten) + ')</span>' : ''}</td></tr>`;
+  }
+  if (data.hauptstrecke) {
+    html += `<tr><td style="padding:3px 0;color:var(--text-muted)">Hauptstrecke (Lade → Entlade)</td><td style="text-align:right;font-weight:600">${data.hauptstrecke.km} km${data.hauptstrecke.minuten ? ' <span style="color:var(--text-muted);font-weight:400">(' + formatMinuten(data.hauptstrecke.minuten) + ')</span>' : ''}</td></tr>`;
+  }
+  if (data.rueckfahrt) {
+    html += `<tr><td style="padding:3px 0;color:var(--text-muted)">Rückfahrt (Entlade → Lichtenstein)</td><td style="text-align:right;font-weight:600">${data.rueckfahrt.km} km${data.rueckfahrt.minuten ? ' <span style="color:var(--text-muted);font-weight:400">(' + formatMinuten(data.rueckfahrt.minuten) + ')</span>' : ''}</td></tr>`;
+  }
+  html += `<tr style="border-top:2px solid var(--primary)"><td style="padding:6px 0;font-weight:700;font-size:14px">Gesamt</td><td style="text-align:right;font-weight:700;font-size:14px;color:var(--primary)">${data.gesamt_km} km <span style="font-weight:400;font-size:12px;color:var(--text-muted)">(${formatMinuten(data.gesamt_minuten)})</span></td></tr>`;
+  html += '</tbody></table>';
+  return html;
+}
+
+function formatMinuten(min) {
+  if (!min) return '0 Min';
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m} Min`;
+  return `${h}h ${m}min`;
+}
+
+async function berechneKm() {
+  const ladestelle = document.getElementById('af-abholung-ort').value;
+  const entladestelle = document.getElementById('af-lieferung-ort').value;
+
+  if (!ladestelle || !entladestelle) {
+    showFeedback('Bitte Abholort und Lieferort eingeben', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('km-btn');
+  const resultDiv = document.getElementById('km-result');
+  btn.disabled = true;
+  btn.textContent = 'Berechne...';
+  resultDiv.innerHTML = '<span style="color:var(--text-muted)">Berechne Route...</span>';
+
+  const payload = { ladestelle, entladestelle };
+  if (ortCoords.abholung) payload.lade_coords = { lat: ortCoords.abholung.lat, lon: ortCoords.abholung.lon };
+  if (ortCoords.lieferung) payload.entlade_coords = { lat: ortCoords.lieferung.lat, lon: ortCoords.lieferung.lon };
+
+  const r = await api('/api/km-berechnung', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  btn.disabled = false;
+  btn.textContent = 'Berechnen';
+
+  if (r.error) {
+    resultDiv.innerHTML = `<span style="color:var(--rot)">${esc(r.error)}</span>`;
+    return;
+  }
+
+  resultDiv.innerHTML = renderKmResult(r);
+
+  // Hidden fields aktualisieren
+  document.getElementById('af-km-anfahrt').value = r.anfahrt?.km || 0;
+  document.getElementById('af-km-hauptstrecke').value = r.hauptstrecke?.km || 0;
+  document.getElementById('af-km-rueckfahrt').value = r.rueckfahrt?.km || 0;
+  document.getElementById('af-km-gesamt').value = r.gesamt_km;
+  document.getElementById('af-km-minuten').value = r.gesamt_minuten;
+
+  // Koordinaten vom Server-Response holen (falls nicht schon gesetzt)
+  if (r.ladestelle_coords) {
+    ortCoords.abholung = { lat: r.ladestelle_coords.lat, lon: r.ladestelle_coords.lon, name: ladestelle };
+  }
+  if (r.entladestelle_coords) {
+    ortCoords.lieferung = { lat: r.entladestelle_coords.lat, lon: r.entladestelle_coords.lon, name: entladestelle };
+  }
+
+  // Karte aktualisieren
+  updateMiniMap(r);
+}
+
 function posTypChanged(sel) {
-  const freitext = sel.closest('td').querySelector('.pos-typ-name');
+  const td = sel.closest('td');
+  const freitext = td.querySelector('.pos-typ-name');
+  const masse = td.querySelector('.pos-freitext-masse');
   freitext.style.display = sel.value ? 'none' : 'block';
-  if (sel.value) freitext.value = '';
+  masse.style.display = sel.value ? 'none' : 'flex';
+  if (sel.value) {
+    freitext.value = '';
+    td.querySelector('.pos-laenge').value = '';
+    td.querySelector('.pos-breite').value = '';
+  }
 }
 
 function kundeAutocomplete(input) {
@@ -286,6 +576,8 @@ async function saveAuftrag(id) {
       hoehe_mm: parseInt(tr.querySelector('.pos-hoehe').value) || null,
       stapelbar: tr.querySelector('.pos-stapelbar').checked ? 1 : 0,
       beschreibung: tr.querySelector('.pos-beschreibung').value || null,
+      laenge_mm: parseInt(tr.querySelector('.pos-laenge').value) || null,
+      breite_mm: parseInt(tr.querySelector('.pos-breite').value) || null,
     });
   });
 
@@ -299,6 +591,11 @@ async function saveAuftrag(id) {
     transport_art: document.getElementById('af-transport').value,
     gefahrgut: document.getElementById('af-gefahrgut').checked ? 1 : 0,
     notizen: document.getElementById('af-notizen').value || null,
+    km_anfahrt: parseFloat(document.getElementById('af-km-anfahrt').value) || 0,
+    km_hauptstrecke: parseFloat(document.getElementById('af-km-hauptstrecke').value) || 0,
+    km_rueckfahrt: parseFloat(document.getElementById('af-km-rueckfahrt').value) || 0,
+    km_gesamt: parseFloat(document.getElementById('af-km-gesamt').value) || 0,
+    km_minuten: parseInt(document.getElementById('af-km-minuten').value) || 0,
     positionen
   };
 

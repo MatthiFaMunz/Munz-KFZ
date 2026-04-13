@@ -167,17 +167,17 @@ app.get('/api/auftraege/:id', (req, res) => {
 });
 
 app.post('/api/auftraege', (req, res) => {
-  const { kunde_id, kunde_name, datum, abholung_datum, abholung_ort, lieferung_ort, transport_art, gefahrgut, notizen, positionen } = req.body;
+  const { kunde_id, kunde_name, datum, abholung_datum, abholung_ort, lieferung_ort, transport_art, gefahrgut, notizen, positionen, km_anfahrt, km_hauptstrecke, km_rueckfahrt, km_gesamt, km_minuten } = req.body;
   if (!datum) return res.status(400).json({ error: 'Datum erforderlich' });
 
-  dbRun("INSERT INTO auftraege (kunde_id, kunde_name, datum, abholung_datum, abholung_ort, lieferung_ort, transport_art, gefahrgut, notizen) VALUES (?,?,?,?,?,?,?,?,?)",
-    [kunde_id || null, kunde_name || null, datum, abholung_datum || null, abholung_ort || null, lieferung_ort || null, transport_art || 'inland', gefahrgut ? 1 : 0, notizen || null]);
+  dbRun("INSERT INTO auftraege (kunde_id, kunde_name, datum, abholung_datum, abholung_ort, lieferung_ort, transport_art, gefahrgut, notizen, km_anfahrt, km_hauptstrecke, km_rueckfahrt, km_gesamt, km_minuten) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    [kunde_id || null, kunde_name || null, datum, abholung_datum || null, abholung_ort || null, lieferung_ort || null, transport_art || 'inland', gefahrgut ? 1 : 0, notizen || null, km_anfahrt || 0, km_hauptstrecke || 0, km_rueckfahrt || 0, km_gesamt || 0, km_minuten || 0]);
   const auftragId = getDB().exec("SELECT last_insert_rowid()")[0].values[0][0];
 
   if (positionen && positionen.length) {
     for (const p of positionen) {
-      dbRun("INSERT INTO auftrag_positionen (auftrag_id, paletten_typ_id, paletten_typ_name, anzahl, gewicht_kg, hoehe_mm, stapelbar, beschreibung) VALUES (?,?,?,?,?,?,?,?)",
-        [auftragId, p.paletten_typ_id || null, p.paletten_typ_name || null, parseInt(p.anzahl) || 1, p.gewicht_kg ? parseFloat(p.gewicht_kg) : null, p.hoehe_mm ? parseInt(p.hoehe_mm) : null, p.stapelbar ? 1 : 0, p.beschreibung || null]);
+      dbRun("INSERT INTO auftrag_positionen (auftrag_id, paletten_typ_id, paletten_typ_name, anzahl, gewicht_kg, hoehe_mm, stapelbar, beschreibung, laenge_mm, breite_mm) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        [auftragId, p.paletten_typ_id || null, p.paletten_typ_name || null, parseInt(p.anzahl) || 1, p.gewicht_kg ? parseFloat(p.gewicht_kg) : null, p.hoehe_mm ? parseInt(p.hoehe_mm) : null, p.stapelbar ? 1 : 0, p.beschreibung || null, p.laenge_mm ? parseInt(p.laenge_mm) : null, p.breite_mm ? parseInt(p.breite_mm) : null]);
     }
   }
 
@@ -188,7 +188,7 @@ app.put('/api/auftraege/:id', (req, res) => {
   const id = parseInt(req.params.id);
   const { kunde_id, kunde_name, datum, abholung_datum, abholung_ort, lieferung_ort, transport_art, gefahrgut, lkw_typ_id, status, notizen, positionen } = req.body;
 
-  const erlaubt = ['kunde_id', 'kunde_name', 'datum', 'abholung_datum', 'abholung_ort', 'lieferung_ort', 'transport_art', 'gefahrgut', 'lkw_typ_id', 'status', 'notizen'];
+  const erlaubt = ['kunde_id', 'kunde_name', 'datum', 'abholung_datum', 'abholung_ort', 'lieferung_ort', 'transport_art', 'gefahrgut', 'lkw_typ_id', 'status', 'notizen', 'km_anfahrt', 'km_hauptstrecke', 'km_rueckfahrt', 'km_gesamt', 'km_minuten'];
   const sets = [], vals = [];
   for (const [k, v] of Object.entries(req.body)) {
     if (!erlaubt.includes(k)) continue;
@@ -205,8 +205,8 @@ app.put('/api/auftraege/:id', (req, res) => {
   if (positionen) {
     dbRun("DELETE FROM auftrag_positionen WHERE auftrag_id = ?", [id]);
     for (const p of positionen) {
-      dbRun("INSERT INTO auftrag_positionen (auftrag_id, paletten_typ_id, paletten_typ_name, anzahl, gewicht_kg, hoehe_mm, stapelbar, beschreibung) VALUES (?,?,?,?,?,?,?,?)",
-        [id, p.paletten_typ_id || null, p.paletten_typ_name || null, parseInt(p.anzahl) || 1, p.gewicht_kg ? parseFloat(p.gewicht_kg) : null, p.hoehe_mm ? parseInt(p.hoehe_mm) : null, p.stapelbar ? 1 : 0, p.beschreibung || null]);
+      dbRun("INSERT INTO auftrag_positionen (auftrag_id, paletten_typ_id, paletten_typ_name, anzahl, gewicht_kg, hoehe_mm, stapelbar, beschreibung, laenge_mm, breite_mm) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        [id, p.paletten_typ_id || null, p.paletten_typ_name || null, parseInt(p.anzahl) || 1, p.gewicht_kg ? parseFloat(p.gewicht_kg) : null, p.hoehe_mm ? parseInt(p.hoehe_mm) : null, p.stapelbar ? 1 : 0, p.beschreibung || null, p.laenge_mm ? parseInt(p.laenge_mm) : null, p.breite_mm ? parseInt(p.breite_mm) : null]);
     }
   }
 
@@ -262,8 +262,8 @@ app.post('/api/disposition/packen', (req, res) => {
     if (!a) continue;
     const posis = dbAll("SELECT p.*, pt.name as typ_name, pt.laenge as pt_laenge, pt.breite as pt_breite FROM auftrag_positionen p LEFT JOIN paletten_typen pt ON p.paletten_typ_id = pt.id WHERE p.auftrag_id = ?", [aid]);
     for (const p of posis) {
-      const laenge = p.pt_laenge || 1200;
-      const breite = p.pt_breite || 800;
+      const laenge = p.pt_laenge || p.laenge_mm || 1200;
+      const breite = p.pt_breite || p.breite_mm || 800;
       for (let i = 0; i < (p.anzahl || 1); i++) {
         allePaletten.push({
           auftrag_id: aid,
@@ -343,6 +343,102 @@ app.post('/api/disposition/packen', (req, res) => {
   }
 
   res.json({ reihen, gesamtLaenge, gesamtGewicht: Math.round(gesamtGewicht * 10) / 10, gesamtAnzahl, empfehlung, lkwTypen });
+});
+
+// ===================== KM-BERECHNUNG =====================
+
+// Standort: 72805 Lichtenstein
+const STANDORT = { lat: 48.4319, lon: 9.2561, name: '72805 Lichtenstein' };
+
+async function geocode(address) {
+  const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1&countrycodes=de,at,ch,fr,it,nl,be,lu,pl,cz`;
+  const r = await fetch(url, { headers: { 'User-Agent': 'Munz-KFZ-Dispo/1.0' } });
+  const data = await r.json();
+  if (!data.length) return null;
+  return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name };
+}
+
+async function getRoute(from, to) {
+  const url = `https://router.project-osrm.org/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}?overview=false`;
+  const r = await fetch(url);
+  const data = await r.json();
+  if (data.code !== 'Ok' || !data.routes.length) return null;
+  const route = data.routes[0];
+  return {
+    km: Math.round(route.distance / 100) / 10,       // km mit 1 Dezimale
+    minuten: Math.round(route.duration / 60)           // Fahrzeit in Minuten
+  };
+}
+
+function istLichtenstein(address, coords) {
+  if (!address) return false;
+  const lower = address.toLowerCase();
+  if (lower.includes('lichtenstein') || lower.includes('72805')) return true;
+  // Koordinaten-Check: <5km Umkreis von Lichtenstein
+  if (coords) {
+    const dist = Math.sqrt(Math.pow((coords.lat - STANDORT.lat) * 111, 2) + Math.pow((coords.lon - STANDORT.lon) * 73, 2));
+    if (dist < 5) return true;
+  }
+  return false;
+}
+
+app.post('/api/km-berechnung', async (req, res) => {
+  try {
+    const { ladestelle, entladestelle, lade_coords, entlade_coords } = req.body;
+    if (!ladestelle || !entladestelle) return res.status(400).json({ error: 'Lade- und Entladestelle erforderlich' });
+
+    // Koordinaten direkt nutzen oder geocoden
+    const geoLade = lade_coords ? { lat: lade_coords.lat, lon: lade_coords.lon, display: ladestelle } : await geocode(ladestelle);
+    const geoEntlade = entlade_coords ? { lat: entlade_coords.lat, lon: entlade_coords.lon, display: entladestelle } : await geocode(entladestelle);
+
+    if (!geoLade) return res.status(400).json({ error: `Ladestelle "${ladestelle}" nicht gefunden` });
+    if (!geoEntlade) return res.status(400).json({ error: `Entladestelle "${entladestelle}" nicht gefunden` });
+
+    const result = {
+      ladestelle: { adresse: ladestelle, gefunden: geoLade.display },
+      entladestelle: { adresse: entladestelle, gefunden: geoEntlade.display },
+      ladestelle_coords: { lat: geoLade.lat, lon: geoLade.lon },
+      entladestelle_coords: { lat: geoEntlade.lat, lon: geoEntlade.lon },
+      anfahrt: null,
+      hauptstrecke: null,
+      rueckfahrt: null,
+      gesamt_km: 0,
+      gesamt_minuten: 0
+    };
+
+    // Anfahrt: Nur wenn Ladestelle NICHT in Lichtenstein
+    if (!istLichtenstein(ladestelle, geoLade)) {
+      const anfahrt = await getRoute(STANDORT, geoLade);
+      if (anfahrt) {
+        result.anfahrt = { von: STANDORT.name, nach: ladestelle, ...anfahrt };
+        result.gesamt_km += anfahrt.km;
+        result.gesamt_minuten += anfahrt.minuten;
+      }
+    }
+
+    // Hauptstrecke: Ladestelle → Entladestelle
+    const haupt = await getRoute(geoLade, geoEntlade);
+    if (haupt) {
+      result.hauptstrecke = { von: ladestelle, nach: entladestelle, ...haupt };
+      result.gesamt_km += haupt.km;
+      result.gesamt_minuten += haupt.minuten;
+    }
+
+    // Rückfahrt: Entladestelle → Lichtenstein
+    const rueck = await getRoute(geoEntlade, STANDORT);
+    if (rueck) {
+      result.rueckfahrt = { von: entladestelle, nach: STANDORT.name, ...rueck };
+      result.gesamt_km += rueck.km;
+      result.gesamt_minuten += rueck.minuten;
+    }
+
+    result.gesamt_km = Math.round(result.gesamt_km * 10) / 10;
+
+    res.json(result);
+  } catch (e) {
+    console.error('KM-Berechnung Fehler:', e);
+    res.status(500).json({ error: 'Fehler bei KM-Berechnung: ' + e.message });
+  }
 });
 
 // ===================== START =====================

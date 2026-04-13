@@ -252,6 +252,41 @@ label { font-size: 13px; font-weight: 600; display: block; margin-bottom: 4px; }
 }
 .autocomplete-item:hover { background: #e3f2fd; }
 
+/* Ort-Autocomplete */
+.ort-ac-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--card);
+  border: 1px solid var(--primary);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  max-height: 250px;
+  overflow-y: auto;
+  z-index: 60;
+  box-shadow: 0 4px 16px rgba(0,0,0,.15);
+}
+.ort-ac-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.ort-ac-item:hover { background: #e3f2fd; }
+.ort-ac-item:last-child { border-bottom: none; }
+.ort-ac-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+.ort-ac-text { flex: 1; }
+.ort-ac-main { font-weight: 600; font-size: 13px; }
+.ort-ac-detail { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.ort-ac-loading { padding: 12px; text-align: center; color: var(--text-muted); font-size: 12px; }
+
+/* KM-Karte */
+#km-map { height: 250px; border-radius: var(--radius); margin-top: 10px; z-index: 1; }
+
 /* Draufsicht */
 .draufsicht-container {
   padding: 16px;

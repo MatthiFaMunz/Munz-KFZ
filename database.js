@@ -66,6 +66,15 @@ async function initDB() {
     FOREIGN KEY (lkw_typ_id) REFERENCES lkw_typen(id)
   )`);
 
+  // Migration: km_* Spalten hinzufügen
+  try {
+    db.run("ALTER TABLE auftraege ADD COLUMN km_anfahrt REAL DEFAULT 0");
+    db.run("ALTER TABLE auftraege ADD COLUMN km_hauptstrecke REAL DEFAULT 0");
+    db.run("ALTER TABLE auftraege ADD COLUMN km_rueckfahrt REAL DEFAULT 0");
+    db.run("ALTER TABLE auftraege ADD COLUMN km_gesamt REAL DEFAULT 0");
+    db.run("ALTER TABLE auftraege ADD COLUMN km_minuten INTEGER DEFAULT 0");
+  } catch (e) { /* Spalten existieren bereits */ }
+
   db.run(`CREATE TABLE IF NOT EXISTS auftrag_positionen (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     auftrag_id INTEGER NOT NULL,
@@ -107,6 +116,12 @@ async function initDB() {
     for (const d of defaults) { stmt.run(d); }
     stmt.free();
   }
+
+  // Migration: laenge_mm/breite_mm für Freitext-Paletten
+  try {
+    db.run("ALTER TABLE auftrag_positionen ADD COLUMN laenge_mm INTEGER");
+    db.run("ALTER TABLE auftrag_positionen ADD COLUMN breite_mm INTEGER");
+  } catch (e) { /* Spalten existieren bereits */ }
 
   saveDB();
   return db;
