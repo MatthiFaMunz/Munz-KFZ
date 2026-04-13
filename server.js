@@ -282,36 +282,72 @@ app.post('/api/disposition/packen', (req, res) => {
   // Sortieren: größte zuerst
   allePaletten.sort((a, b) => (b.laenge * b.breite) - (a.laenge * a.breite));
 
-  // Einfacher Tetris: Reihen auf der Ladefläche (Breite = 2450mm)
+  // Shelf-Packing mit Lückenfüllung
+  // Jede Palette bekommt absolute Position (x, y) auf der Ladefläche
   const LKW_BREITE = 2450;
-  const reihen = [];
-  const verwendet = new Array(allePaletten.length).fill(false);
+  const ABSTAND = 50;
 
-  for (let i = 0; i < allePaletten.length; i++) {
-    if (verwendet[i]) continue;
-    verwendet[i] = true;
-    const pal = allePaletten[i];
+  // Freie Rechtecke: [{x, y, w, h}] — w = Tiefe (Längsrichtung), h = Breite
+  const freeRects = [{ x: 0, y: 0, w: 100000, h: LKW_BREITE }];
+  const placed = []; // {pal, x, y, laenge, breite}
 
-    // Palette kann längs oder quer liegen
-    const reihe = { paletten: [pal], breiteVerbraucht: pal.breite, maxLaenge: pal.laenge };
+  for (const pal of allePaletten) {
+    // Beste freie Stelle finden (Best Short Side Fit)
+    let bestIdx = -1, bestX = Infinity, bestLeftover = Infinity, bestRotated = false;
 
-    // Weitere Paletten in gleiche Reihe packen (nebeneinander in Breitenrichtung)
-    for (let j = i + 1; j < allePaletten.length; j++) {
-      if (verwendet[j]) continue;
-      const p2 = allePaletten[j];
-      if (reihe.breiteVerbraucht + p2.breite <= LKW_BREITE) {
-        verwendet[j] = true;
-        reihe.paletten.push(p2);
-        reihe.breiteVerbraucht += p2.breite;
-        reihe.maxLaenge = Math.max(reihe.maxLaenge, p2.laenge);
+    for (let ri = 0; ri < freeRects.length; ri++) {
+      const r = freeRects[ri];
+      // Normal: laenge in Tiefe (x), breite in Breite (y)
+      if (pal.laenge <= r.w && pal.breite <= r.h) {
+        const leftover = Math.min(r.w - pal.laenge, r.h - pal.breite);
+        if (r.x < bestX || (r.x === bestX && leftover < bestLeftover)) {
+          bestIdx = ri; bestX = r.x; bestLeftover = leftover; bestRotated = false;
+        }
+      }
+      // Rotiert: breite in Tiefe (x), laenge in Breite (y)
+      if (pal.breite <= r.w && pal.laenge <= r.h) {
+        const leftover = Math.min(r.w - pal.breite, r.h - pal.laenge);
+        if (r.x < bestX || (r.x === bestX && leftover < bestLeftover)) {
+          bestIdx = ri; bestX = r.x; bestLeftover = leftover; bestRotated = true;
+        }
       }
     }
 
-    reihe.tiefe = reihe.maxLaenge + 50; // 50mm Abstand
-    reihen.push(reihe);
+    if (bestIdx === -1) continue; // Sollte nicht passieren
+
+    const rect = freeRects[bestIdx];
+    const pL = bestRotated ? pal.breite : pal.laenge; // Tiefe auf LKW
+    const pB = bestRotated ? pal.laenge : pal.breite; // Breite auf LKW
+
+    placed.push({ pal, x: rect.x, y: rect.y, laenge: pL, breite: pB });
+
+    // Free-Rect aufteilen (Guillotine-Split)
+    freeRects.splice(bestIdx, 1);
+    // Rechts daneben (restliche Tiefe)
+    if (rect.w - pL - ABSTAND > 0) {
+      freeRects.push({ x: rect.x + pL + ABSTAND, y: rect.y, w: rect.w - pL - ABSTAND, h: pB });
+    }
+    // Darunter (restliche Breite)
+    if (rect.h - pB > 0) {
+      freeRects.push({ x: rect.x, y: rect.y + pB, w: rect.w, h: rect.h - pB });
+    }
   }
 
-  const gesamtLaenge = reihen.reduce((s, r) => s + r.tiefe, 0);
+  // Reihen-Format für Frontend-Draufsicht generieren
+  // Gruppiere placed-Paletten nach x-Position zu Reihen
+  const reihenMap = new Map();
+  for (const p of placed) {
+    // Runden auf 10mm um gleiche x-Positionen zusammenzufassen
+    const key = p.x;
+    if (!reihenMap.has(key)) reihenMap.set(key, { paletten: [], tiefe: 0, x: p.x });
+    reihenMap.get(key).paletten.push({ ...p.pal, laenge: p.laenge, breite: p.breite, _y: p.y });
+    reihenMap.get(key).tiefe = Math.max(reihenMap.get(key).tiefe, p.laenge + ABSTAND);
+  }
+  const reihen = [...reihenMap.values()].sort((a, b) => a.x - b.x);
+  // Paletten innerhalb jeder Reihe nach y sortieren
+  for (const r of reihen) r.paletten.sort((a, b) => a._y - b._y);
+
+  const gesamtLaenge = placed.length ? Math.max(...placed.map(p => p.x + p.laenge)) + ABSTAND : 0;
   const gesamtGewicht = allePaletten.reduce((s, p) => s + p.gewicht, 0);
   const gesamtAnzahl = allePaletten.length;
 

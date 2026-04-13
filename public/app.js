@@ -729,18 +729,16 @@ function renderDraufsicht(reihen, empfehlung) {
   let fi = 0;
 
   let palletsHtml = '';
-  let xPos = 0;
 
   for (const reihe of reihen) {
-    let yPos = 0;
     for (const pal of reihe.paletten) {
       if (!farbMap[pal.name]) farbMap[pal.name] = farben[fi++ % farben.length];
+      const x = (reihe.x || 0) * scale;
+      const y = (pal._y || 0) * scale;
       const w = pal.laenge * scale;
       const h = pal.breite * scale;
-      palletsHtml += `<div style="position:absolute;left:${kabineW + xPos}px;top:${yPos}px;width:${w}px;height:${h}px;background:${farbMap[pal.name]};border:1px solid rgba(0,0,0,.2);border-radius:2px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:600;overflow:hidden;text-shadow:0 1px 2px rgba(0,0,0,.3)" title="${pal.name} ${pal.laenge}x${pal.breite}mm">${pal.name}</div>`;
-      yPos += h;
+      palletsHtml += `<div style="position:absolute;left:${kabineW + x}px;top:${y}px;width:${w}px;height:${h}px;background:${farbMap[pal.name]};border:1px solid rgba(0,0,0,.2);border-radius:2px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:600;overflow:hidden;text-shadow:0 1px 2px rgba(0,0,0,.3)" title="${pal.name} ${pal.laenge}x${pal.breite}mm">${pal.name}</div>`;
     }
-    xPos += reihe.tiefe * scale;
   }
 
   // Meter-Markierungen
