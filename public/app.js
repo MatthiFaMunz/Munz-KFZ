@@ -107,7 +107,7 @@ async function loadAuftraege() {
               <td>${esc(a.display_name)}</td>
               <td>${esc(a.abholung_ort || '—')}</td>
               <td>${esc(a.lieferung_ort || '—')}</td>
-              <td>${a.positionen ? a.positionen.map(p => { const name = p.typ_name || p.paletten_typ_name || 'Palette'; const masse = !p.typ_name && p.laenge_mm && p.breite_mm ? ` (${p.laenge_mm}x${p.breite_mm})` : ''; return `${p.anzahl}x ${esc(name)}${masse}`; }).join(', ') : '—'}</td>
+              <td>${a.positionen ? a.positionen.map(p => { const name = p.typ_name || p.paletten_typ_name || 'Palette'; const l = p.laenge || p.laenge_mm; const b = p.breite || p.breite_mm; const masse = l && b ? ' <span style="color:var(--text-muted);font-size:11px">(' + l + 'x' + b + 'mm)</span>' : ''; return p.anzahl + 'x ' + esc(name) + masse; }).join(', ') : '—'}</td>
               <td style="white-space:nowrap;font-weight:${a.km_gesamt ? '600' : '400'};color:${a.km_gesamt ? 'var(--primary)' : 'var(--text-muted)'}">${a.km_gesamt ? a.km_gesamt + ' km' : '—'}</td>
               <td>
                 ${transportBadge(a.transport_art)}
