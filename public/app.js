@@ -967,7 +967,8 @@ function renderDraufsicht(reihen, empfehlung) {
       const y = (pal._y || 0) * scale;
       const w = pal.laenge * scale;
       const h = pal.breite * scale;
-      palletsHtml += `<div style="position:absolute;left:${kabineW + x}px;top:${y}px;width:${w}px;height:${h}px;background:${farbMap[pal.name]};border:1px solid rgba(0,0,0,.2);border-radius:2px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:600;overflow:hidden;text-shadow:0 1px 2px rgba(0,0,0,.3)" title="${pal.name} ${pal.laenge}x${pal.breite}mm">${pal.name}</div>`;
+      const label = `${pal.name}<br><span style="font-weight:400;font-size:8px">${pal.laenge}x${pal.breite}</span>`;
+      palletsHtml += `<div style="position:absolute;left:${kabineW + x}px;top:${y}px;width:${w}px;height:${h}px;background:${farbMap[pal.name]};border:1px solid rgba(0,0,0,.2);border-radius:2px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:600;overflow:hidden;text-shadow:0 1px 2px rgba(0,0,0,.3);flex-direction:column;line-height:1.2;text-align:center;padding:2px" title="${pal.name} ${pal.laenge}x${pal.breite}mm">${label}</div>`;
     }
   }
 
@@ -980,7 +981,14 @@ function renderDraufsicht(reihen, empfehlung) {
   }
 
   // Legende
-  const legende = Object.entries(farbMap).map(([name, color]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:11px"><span style="width:12px;height:12px;background:${color};border-radius:2px;display:inline-block"></span>${name}</span>`).join('');
+  // Legende mit Maßen aus den Paletten sammeln
+  const legendeItems = {};
+  for (const reihe of reihen) {
+    for (const pal of reihe.paletten) {
+      if (!legendeItems[pal.name]) legendeItems[pal.name] = { color: farbMap[pal.name], laenge: pal.laenge, breite: pal.breite };
+    }
+  }
+  const legende = Object.entries(legendeItems).map(([name, v]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:14px;font-size:11px"><span style="width:12px;height:12px;background:${v.color};border-radius:2px;display:inline-block"></span>${name} <span style="color:#666">(${v.laenge}x${v.breite}mm)</span></span>`).join('');
 
   return `<div class="draufsicht-container">
     <div style="font-size:13px;font-weight:600;margin-bottom:8px">Draufsicht ${empfehlung.name} (${(lkwLaenge / 1000).toFixed(1)}m x 2.45m)</div>
