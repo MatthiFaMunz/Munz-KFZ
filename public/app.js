@@ -614,10 +614,13 @@ async function saveAuftrag(id) {
 
 // ===================== DISPOSITION =====================
 
+let lastDispoData = null;
+
 async function loadDisposition() {
   const container = document.getElementById('page-disposition');
   const data = await api('/api/disposition');
   if (data.error) { container.innerHTML = `<div class="card">Fehler: ${data.error}</div>`; return; }
+  lastDispoData = data;
 
   const { auftraege, lkwTypen } = data;
 
@@ -632,7 +635,10 @@ async function loadDisposition() {
   let html = `<div class="card">
     <div class="card-header">
       <span>Disposition</span>
-      <button class="btn btn-primary btn-sm" onclick="berechnePackung()">Packberechnung</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-sm btn-outline" onclick="druckeDispo()">🖨 Drucken</button>
+        <button class="btn btn-primary btn-sm" onclick="berechnePackung()">Packberechnung</button>
+      </div>
     </div>`;
 
   if (!auftraege.length) {
@@ -651,7 +657,7 @@ async function loadDisposition() {
             <td>#${a.id}</td>
             <td>${esc(a.display_name)}</td>
             <td>${esc(a.abholung_ort || '?')} → ${esc(a.lieferung_ort || '?')}</td>
-            <td>${a.positionen?.map(p => `${p.anzahl}x ${esc(p.typ_name || p.paletten_typ_name || 'Pal.')}`).join(', ') || '—'}</td>
+            <td>${a.positionen?.map(p => { const name = p.typ_name || p.paletten_typ_name || 'Pal.'; const l = p.laenge || p.laenge_mm; const b = p.breite || p.breite_mm; const masse = l && b ? ' <span style="color:var(--text-muted);font-size:11px">(' + l + 'x' + b + 'mm)</span>' : ''; return p.anzahl + 'x ' + esc(name) + masse; }).join(', ') || '—'}</td>
             <td>${transportBadge(a.transport_art)} ${a.gefahrgut ? '<span class="gefahrgut-badge">ADR</span>' : ''}</td>
           </tr>`).join('')}
         </tbody>
@@ -666,6 +672,122 @@ async function loadDisposition() {
 function dispoSelectAll(cb) {
   const checks = document.querySelectorAll('.dispo-check');
   checks.forEach(c => c.checked = cb.checked);
+}
+
+function druckeDispo() {
+  const dispoCard = document.querySelector('#page-disposition .card');
+  const packResult = document.getElementById('dispo-result');
+  if (!dispoCard) return;
+
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Disposition – Druckansicht</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; color: #222; font-size: 12px; }
+  h1 { font-size: 18px; margin-bottom: 4px; }
+  .print-meta { color: #666; font-size: 11px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  th { background: #333; color: #fff; padding: 6px 8px; text-align: left; font-size: 11px; text-transform: uppercase; }
+  td { padding: 5px 8px; border-bottom: 1px solid #ddd; font-size: 12px; }
+  tr:nth-child(even) { background: #f5f5f5; }
+  h3 { font-size: 14px; margin: 12px 0 6px; border-bottom: 2px solid #333; padding-bottom: 4px; }
+  .stats-row { display: flex; gap: 12px; margin-bottom: 12px; }
+  .stat-box { border: 1px solid #ccc; border-radius: 4px; padding: 8px 16px; text-align: center; flex: 1; }
+  .stat-box .val { font-size: 18px; font-weight: 700; }
+  .stat-box .lbl { font-size: 10px; color: #666; text-transform: uppercase; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+  .badge-inland { background: #e3f2fd; color: #1565c0; }
+  .badge-international { background: #fff3e0; color: #e65100; }
+  .badge-a1 { background: #fce4ec; color: #c62828; }
+  .badge-adr { background: #fff9c4; color: #f57f17; border: 1px solid #f57f17; }
+  .warn { background: #fff3e0; border: 1px solid #ff9800; border-left: 4px solid #e65100; padding: 8px; border-radius: 4px; margin-bottom: 12px; font-size: 11px; }
+  .warn-title { font-weight: 700; color: #e65100; }
+  .bar-container { background: #e0e0e0; border-radius: 4px; height: 14px; overflow: hidden; margin: 4px 0 8px; }
+  .bar { height: 100%; border-radius: 4px; }
+  .draufsicht { margin-top: 8px; }
+  .no-print { display: none; }
+  @media print {
+    body { padding: 10px; }
+    .no-print { display: none !important; }
+  }
+  @media screen {
+    .print-btn { position: fixed; top: 10px; right: 10px; padding: 8px 20px; background: #1565c0; color: #fff; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; }
+    .print-btn:hover { background: #0d47a1; }
+  }
+</style></head><body>
+<button class="print-btn no-print" onclick="window.print()">Drucken</button>
+<h1>Munz-KFZ Dispo</h1>
+<div class="print-meta">Erstellt: ${new Date().toLocaleString('de-DE')} | Munz D/M/H Fertigungstechnik</div>`);
+
+  // Dispo-Tabelle aufbereiten
+  const dispoData = lastDispoData;
+  if (dispoData) {
+    const { auftraege } = dispoData;
+    const tage = {};
+    for (const a of auftraege) {
+      const tag = a.abholung_datum || 'Ohne Datum';
+      if (!tage[tag]) tage[tag] = [];
+      tage[tag].push(a);
+    }
+
+    for (const [tag, aufs] of Object.entries(tage)) {
+      const gesamtPaletten = aufs.reduce((s, a) => s + (a.positionen?.reduce((s2, p) => s2 + (p.anzahl || 0), 0) || 0), 0);
+      win.document.write('<h3>' + (tag === 'Ohne Datum' ? 'Ohne Datum' : formatDate(tag)) + ' — ' + gesamtPaletten + ' Paletten</h3>');
+      win.document.write('<table><thead><tr><th>Nr.</th><th>Kunde</th><th>Abholung</th><th>Lieferung</th><th>Positionen</th><th>KM</th><th>Transport</th></tr></thead><tbody>');
+      for (const a of aufs) {
+        const transportLabel = { inland: 'Inland', international: 'International', a1_schweiz: 'A1 Schweiz' };
+        const transportCls = { inland: 'badge-inland', international: 'badge-international', a1_schweiz: 'badge-a1' };
+        const posStr = a.positionen?.map(p => {
+          const name = p.typ_name || p.paletten_typ_name || 'Pal.';
+          const l = p.laenge || p.laenge_mm;
+          const b = p.breite || p.breite_mm;
+          const masse = l && b ? ' (' + l + 'x' + b + 'mm)' : '';
+          return p.anzahl + 'x ' + name + masse;
+        }).join(', ') || '—';
+        win.document.write('<tr><td>#' + a.id + '</td><td>' + (a.display_name || '—') + '</td><td>' + (a.abholung_ort || '—') + '</td><td>' + (a.lieferung_ort || '—') + '</td><td>' + posStr + '</td><td>' + (a.km_gesamt ? a.km_gesamt + ' km' : '—') + '</td><td><span class="badge ' + (transportCls[a.transport_art] || 'badge-inland') + '">' + (transportLabel[a.transport_art] || 'Inland') + '</span>' + (a.gefahrgut ? ' <span class="badge badge-adr">ADR</span>' : '') + '</td></tr>');
+      }
+      win.document.write('</tbody></table>');
+    }
+  }
+
+  // Packberechnung einbetten (falls vorhanden)
+  if (packResult && packResult.innerHTML.trim()) {
+    win.document.write('<h3>Packberechnung</h3>');
+    // Stats
+    if (lastPackData) {
+      const d = lastPackData;
+      win.document.write('<div class="stats-row">');
+      win.document.write('<div class="stat-box"><div class="val">' + d.gesamtAnzahl + '</div><div class="lbl">Paletten</div></div>');
+      win.document.write('<div class="stat-box"><div class="val">' + (d.gesamtLaenge / 1000).toFixed(1) + 'm</div><div class="lbl">Ladelänge</div></div>');
+      win.document.write('<div class="stat-box"><div class="val">' + (d.gesamtBreite ? (d.gesamtBreite / 1000).toFixed(2) + 'm' : '—') + '</div><div class="lbl">Ladebreite</div></div>');
+      win.document.write('<div class="stat-box"><div class="val">' + d.gesamtGewicht + 'kg</div><div class="lbl">Gewicht</div></div>');
+      win.document.write('<div class="stat-box"><div class="val">' + (d.empfehlung ? d.empfehlung.name : '—') + '</div><div class="lbl">Empfehlung</div></div>');
+      win.document.write('</div>');
+
+      if (d.warnungen && d.warnungen.length) {
+        win.document.write('<div class="warn"><div class="warn-title">Nicht alle Paletten passen:</div>');
+        d.warnungen.forEach(w => win.document.write('<div>&bull; ' + w + '</div>'));
+        win.document.write('</div>');
+      }
+
+      if (d.empfehlung) {
+        const pctL = Math.round(d.gesamtLaenge / d.empfehlung.laenge * 100);
+        const colL = pctL > 100 ? '#c62828' : pctL > 90 ? '#f9a825' : '#2e7d32';
+        win.document.write('<div style="font-size:11px;margin-bottom:2px">' + d.empfehlung.name + ' — Länge ' + pctL + '%</div>');
+        win.document.write('<div class="bar-container"><div class="bar" style="background:' + colL + ';width:' + Math.min(pctL, 100) + '%"></div></div>');
+      }
+    }
+
+    // Draufsicht als Bild
+    const draufsicht = packResult.querySelector('.draufsicht-container');
+    if (draufsicht) {
+      win.document.write('<div class="draufsicht">' + draufsicht.innerHTML + '</div>');
+    }
+  }
+
+  win.document.write('</body></html>');
+  win.document.close();
 }
 
 async function berechnePackung() {
