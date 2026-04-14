@@ -251,61 +251,26 @@ app.get('/api/disposition', (req, res) => {
   res.json({ auftraege, lkwTypen });
 });
 
-app.post('/api/disposition/packen', (req, res) => {
-  const { auftrag_ids } = req.body;
-  if (!auftrag_ids || !auftrag_ids.length) return res.status(400).json({ error: 'Keine Aufträge' });
-
-  // Alle Positionen sammeln
-  const allePaletten = [];
-  for (const aid of auftrag_ids) {
-    const a = dbGet("SELECT * FROM auftraege WHERE id = ?", [aid]);
-    if (!a) continue;
-    const posis = dbAll("SELECT p.*, pt.name as typ_name, pt.laenge as pt_laenge, pt.breite as pt_breite FROM auftrag_positionen p LEFT JOIN paletten_typen pt ON p.paletten_typ_id = pt.id WHERE p.auftrag_id = ?", [aid]);
-    for (const p of posis) {
-      const laenge = p.pt_laenge || p.laenge_mm || 1200;
-      const breite = p.pt_breite || p.breite_mm || 800;
-      for (let i = 0; i < (p.anzahl || 1); i++) {
-        allePaletten.push({
-          auftrag_id: aid,
-          position_id: p.id,
-          name: p.typ_name || p.paletten_typ_name || 'Palette',
-          laenge,
-          breite,
-          gewicht: p.gewicht_kg || 0,
-          stapelbar: p.stapelbar === 1,
-          hoehe: p.hoehe_mm || 144
-        });
-      }
-    }
-  }
-
-  // Sortieren: größte zuerst
-  allePaletten.sort((a, b) => (b.laenge * b.breite) - (a.laenge * a.breite));
-
-  // Shelf-Packing mit Lückenfüllung
-  // Jede Palette bekommt absolute Position (x, y) auf der Ladefläche
+// Hilfsfunktion: Packe eine Liste von Paletten
+function packePaletten(paletten) {
   const LKW_BREITE = 2450;
   const ABSTAND = 50;
+  const sorted = [...paletten].sort((a, b) => (b.laenge * b.breite) - (a.laenge * a.breite));
 
-  // Freie Rechtecke: [{x, y, w, h}] — w = Tiefe (Längsrichtung), h = Breite
   const freeRects = [{ x: 0, y: 0, w: 100000, h: LKW_BREITE }];
-  const placed = []; // {pal, x, y, laenge, breite}
+  const placed = [];
   const warnungen = [];
 
-  for (const pal of allePaletten) {
-    // Beste freie Stelle finden (Best Short Side Fit)
+  for (const pal of sorted) {
     let bestIdx = -1, bestX = Infinity, bestLeftover = Infinity, bestRotated = false;
-
     for (let ri = 0; ri < freeRects.length; ri++) {
       const r = freeRects[ri];
-      // Normal: laenge in Tiefe (x), breite in Breite (y)
       if (pal.laenge <= r.w && pal.breite <= r.h) {
         const leftover = Math.min(r.w - pal.laenge, r.h - pal.breite);
         if (r.x < bestX || (r.x === bestX && leftover < bestLeftover)) {
           bestIdx = ri; bestX = r.x; bestLeftover = leftover; bestRotated = false;
         }
       }
-      // Rotiert: breite in Tiefe (x), laenge in Breite (y)
       if (pal.breite <= r.w && pal.laenge <= r.h) {
         const leftover = Math.min(r.w - pal.breite, r.h - pal.laenge);
         if (r.x < bestX || (r.x === bestX && leftover < bestLeftover)) {
@@ -315,107 +280,128 @@ app.post('/api/disposition/packen', (req, res) => {
     }
 
     if (bestIdx === -1) {
-      // Grund ermitteln warum Palette nicht passt
       const name = pal.name || 'Palette';
-      if (pal.breite > LKW_BREITE && pal.laenge > LKW_BREITE) {
-        warnungen.push(`${name} (${pal.laenge}x${pal.breite}mm): Beide Seiten breiter als LKW (${LKW_BREITE}mm) — passt nicht auf die Ladefläche`);
-      } else if (Math.min(pal.breite, pal.laenge) > LKW_BREITE) {
-        warnungen.push(`${name} (${pal.laenge}x${pal.breite}mm): Schmalste Seite ${Math.min(pal.breite, pal.laenge)}mm > LKW-Breite ${LKW_BREITE}mm — passt nicht`);
+      if (Math.min(pal.breite, pal.laenge) > LKW_BREITE) {
+        warnungen.push(`${name} (${pal.laenge}x${pal.breite}mm): Schmalste Seite > LKW-Breite ${LKW_BREITE}mm`);
       } else {
-        // Passt grundsätzlich, aber kein Platz mehr frei
         const bestFreeW = freeRects.reduce((m, r) => Math.max(m, r.w), 0);
         const bestFreeH = freeRects.reduce((m, r) => Math.max(m, r.h), 0);
-        warnungen.push(`${name} (${pal.laenge}x${pal.breite}mm): Kein Platz mehr frei — größte Lücke: ${bestFreeW}mm Tiefe x ${bestFreeH}mm Breite`);
+        warnungen.push(`${name} (${pal.laenge}x${pal.breite}mm): Kein Platz — Lücke: ${bestFreeW}x${bestFreeH}mm`);
       }
       continue;
     }
 
     const rect = freeRects[bestIdx];
-    const pL = bestRotated ? pal.breite : pal.laenge; // Tiefe auf LKW
-    const pB = bestRotated ? pal.laenge : pal.breite; // Breite auf LKW
-
+    const pL = bestRotated ? pal.breite : pal.laenge;
+    const pB = bestRotated ? pal.laenge : pal.breite;
     placed.push({ pal, x: rect.x, y: rect.y, laenge: pL, breite: pB });
 
-    // Free-Rect aufteilen (Maximal Rectangles Split)
     freeRects.splice(bestIdx, 1);
-    // Rechts daneben (volle Breite des Originals)
-    if (rect.w - pL - ABSTAND > 0) {
-      freeRects.push({ x: rect.x + pL + ABSTAND, y: rect.y, w: rect.w - pL - ABSTAND, h: rect.h });
-    }
-    // Darunter (volle Tiefe des Originals)
-    if (rect.h - pB > 0) {
-      freeRects.push({ x: rect.x, y: rect.y + pB, w: rect.w, h: rect.h - pB });
-    }
+    if (rect.w - pL - ABSTAND > 0) freeRects.push({ x: rect.x + pL + ABSTAND, y: rect.y, w: rect.w - pL - ABSTAND, h: rect.h });
+    if (rect.h - pB > 0) freeRects.push({ x: rect.x, y: rect.y + pB, w: rect.w, h: rect.h - pB });
 
-    // Überlappende Rects bereinigen: Neue Rects können sich überlappen,
-    // daher bei jeder Platzierung alle Rects gegen die platzierte Palette clippen
     const px1 = rect.x, py1 = rect.y, px2 = rect.x + pL, py2 = rect.y + pB;
     for (let ri = freeRects.length - 1; ri >= 0; ri--) {
       const r = freeRects[ri];
       const rx2 = r.x + r.w, ry2 = r.y + r.h;
-      // Prüfen ob Rect mit platzierter Palette überlappt
       if (r.x < px2 + ABSTAND && rx2 > px1 && r.y < py2 && ry2 > py1) {
         const splits = [];
-        // Links
         if (r.x < px1) splits.push({ x: r.x, y: r.y, w: px1 - r.x - ABSTAND, h: r.h });
-        // Rechts
         if (rx2 > px2 + ABSTAND) splits.push({ x: px2 + ABSTAND, y: r.y, w: rx2 - px2 - ABSTAND, h: r.h });
-        // Oben
         if (r.y < py1) splits.push({ x: r.x, y: r.y, w: r.w, h: py1 - r.y });
-        // Unten
         if (ry2 > py2) splits.push({ x: r.x, y: py2, w: r.w, h: ry2 - py2 });
         freeRects.splice(ri, 1, ...splits.filter(s => s.w > 0 && s.h > 0));
       }
     }
   }
 
-  // Reihen-Format für Frontend-Draufsicht generieren
-  // Gruppiere placed-Paletten nach x-Position zu Reihen
+  // Reihen-Format
   const reihenMap = new Map();
   for (const p of placed) {
-    // Runden auf 10mm um gleiche x-Positionen zusammenzufassen
-    const key = p.x;
-    if (!reihenMap.has(key)) reihenMap.set(key, { paletten: [], tiefe: 0, x: p.x });
-    reihenMap.get(key).paletten.push({ ...p.pal, laenge: p.laenge, breite: p.breite, _y: p.y });
-    reihenMap.get(key).tiefe = Math.max(reihenMap.get(key).tiefe, p.laenge + ABSTAND);
+    if (!reihenMap.has(p.x)) reihenMap.set(p.x, { paletten: [], tiefe: 0, x: p.x });
+    reihenMap.get(p.x).paletten.push({ ...p.pal, laenge: p.laenge, breite: p.breite, _y: p.y });
+    reihenMap.get(p.x).tiefe = Math.max(reihenMap.get(p.x).tiefe, p.laenge + ABSTAND);
   }
   const reihen = [...reihenMap.values()].sort((a, b) => a.x - b.x);
-  // Paletten innerhalb jeder Reihe nach y sortieren
   for (const r of reihen) r.paletten.sort((a, b) => a._y - b._y);
 
   const gesamtLaenge = placed.length ? Math.max(...placed.map(p => p.x + p.laenge)) + ABSTAND : 0;
   const gesamtBreite = placed.length ? Math.max(...placed.map(p => p.y + p.breite)) : 0;
-  const gesamtGewicht = allePaletten.reduce((s, p) => s + p.gewicht, 0);
-  const gesamtAnzahl = allePaletten.length;
+  const gesamtGewicht = sorted.reduce((s, p) => s + p.gewicht, 0);
+  const gesamtAnzahl = sorted.length;
 
-  // LKW-Empfehlung
+  return { reihen, gesamtLaenge, gesamtBreite, gesamtGewicht: Math.round(gesamtGewicht * 10) / 10, gesamtAnzahl, warnungen };
+}
+
+app.post('/api/disposition/packen', (req, res) => {
+  const { auftrag_ids } = req.body;
+  if (!auftrag_ids || !auftrag_ids.length) return res.status(400).json({ error: 'Keine Aufträge' });
+
   const lkwTypen = dbAll("SELECT * FROM lkw_typen WHERE aktiv = 1 ORDER BY sortierung, laenge");
-  let empfehlung = null;
-  for (const lkw of lkwTypen) {
-    if (lkw.laenge >= gesamtLaenge && lkw.breite >= gesamtBreite) {
-      const gewichtOk = !lkw.max_gewicht || !gesamtGewicht || gesamtGewicht <= lkw.max_gewicht;
-      empfehlung = {
-        name: lkw.name, laenge: lkw.laenge, breite: lkw.breite,
-        auslastung: Math.round(gesamtLaenge / lkw.laenge * 100),
-        max_gewicht: lkw.max_gewicht || null,
-        gewichtUeberschritten: !gewichtOk
-      };
-      if (gewichtOk) break;
-      empfehlung = null;
+
+  // Jeden Auftrag einzeln berechnen
+  const ergebnisse = [];
+  for (const aid of auftrag_ids) {
+    const a = dbGet("SELECT * FROM auftraege WHERE id = ?", [aid]);
+    if (!a) continue;
+    const posis = dbAll("SELECT p.*, pt.name as typ_name, pt.laenge as pt_laenge, pt.breite as pt_breite FROM auftrag_positionen p LEFT JOIN paletten_typen pt ON p.paletten_typ_id = pt.id WHERE p.auftrag_id = ?", [aid]);
+
+    const paletten = [];
+    for (const p of posis) {
+      const laenge = p.pt_laenge || p.laenge_mm || 1200;
+      const breite = p.pt_breite || p.breite_mm || 800;
+      for (let i = 0; i < (p.anzahl || 1); i++) {
+        paletten.push({
+          auftrag_id: aid, position_id: p.id,
+          name: p.typ_name || p.paletten_typ_name || 'Palette',
+          laenge, breite,
+          gewicht: p.gewicht_kg || 0,
+          stapelbar: p.stapelbar === 1,
+          hoehe: p.hoehe_mm || 144
+        });
+      }
     }
-  }
-  if (!empfehlung && gesamtLaenge > 0 && lkwTypen.length) {
-    const biggest = lkwTypen[lkwTypen.length - 1];
-    const anzahl = Math.ceil(gesamtLaenge / biggest.laenge);
-    empfehlung = {
-      name: `${anzahl}x ${biggest.name}`, laenge: biggest.laenge * anzahl, breite: biggest.breite,
-      auslastung: Math.round(gesamtLaenge / (biggest.laenge * anzahl) * 100),
-      max_gewicht: biggest.max_gewicht ? biggest.max_gewicht * anzahl : null,
-      gewichtUeberschritten: biggest.max_gewicht && gesamtGewicht > biggest.max_gewicht * anzahl
-    };
+
+    const pack = packePaletten(paletten);
+
+    // LKW-Empfehlung
+    let empfehlung = null;
+    for (const lkw of lkwTypen) {
+      if (lkw.laenge >= pack.gesamtLaenge && lkw.breite >= pack.gesamtBreite) {
+        const gewichtOk = !lkw.max_gewicht || !pack.gesamtGewicht || pack.gesamtGewicht <= lkw.max_gewicht;
+        empfehlung = {
+          name: lkw.name, laenge: lkw.laenge, breite: lkw.breite,
+          auslastung: Math.round(pack.gesamtLaenge / lkw.laenge * 100),
+          max_gewicht: lkw.max_gewicht || null,
+          gewichtUeberschritten: !gewichtOk
+        };
+        if (gewichtOk) break;
+        empfehlung = null;
+      }
+    }
+    if (!empfehlung && pack.gesamtLaenge > 0 && lkwTypen.length) {
+      const biggest = lkwTypen[lkwTypen.length - 1];
+      const anzahl = Math.ceil(pack.gesamtLaenge / biggest.laenge);
+      empfehlung = {
+        name: `${anzahl}x ${biggest.name}`, laenge: biggest.laenge * anzahl, breite: biggest.breite,
+        auslastung: Math.round(pack.gesamtLaenge / (biggest.laenge * anzahl) * 100),
+        max_gewicht: biggest.max_gewicht ? biggest.max_gewicht * anzahl : null,
+        gewichtUeberschritten: biggest.max_gewicht && pack.gesamtGewicht > biggest.max_gewicht * anzahl
+      };
+    }
+
+    const kundeName = a.kunde_ref_name || a.kunde_name || '—';
+    ergebnisse.push({
+      auftrag_id: aid,
+      kunde: kundeName,
+      abholung_ort: a.abholung_ort,
+      lieferung_ort: a.lieferung_ort,
+      ...pack,
+      empfehlung
+    });
   }
 
-  res.json({ reihen, gesamtLaenge, gesamtBreite, gesamtGewicht: Math.round(gesamtGewicht * 10) / 10, gesamtAnzahl, empfehlung, lkwTypen, warnungen });
+  res.json({ ergebnisse, lkwTypen });
 });
 
 // ===================== KM-BERECHNUNG =====================

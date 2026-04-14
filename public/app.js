@@ -752,37 +752,38 @@ function druckeDispo() {
   }
 
   // Packberechnung einbetten (falls vorhanden)
-  if (packResult && packResult.innerHTML.trim()) {
-    win.document.write('<h3>Packberechnung</h3>');
-    // Stats
-    if (lastPackData) {
-      const d = lastPackData;
+  if (lastPackData && lastPackData.ergebnisse) {
+    for (const erg of lastPackData.ergebnisse) {
+      win.document.write('<h3 style="margin-top:20px">Packberechnung #' + erg.auftrag_id + ' — ' + (erg.kunde || '—') + '</h3>');
+      win.document.write('<div style="font-size:11px;color:#666;margin-bottom:8px">' + (erg.abholung_ort || '?') + ' → ' + (erg.lieferung_ort || '?') + '</div>');
+
       win.document.write('<div class="stats-row">');
-      win.document.write('<div class="stat-box"><div class="val">' + d.gesamtAnzahl + '</div><div class="lbl">Paletten</div></div>');
-      win.document.write('<div class="stat-box"><div class="val">' + (d.gesamtLaenge / 1000).toFixed(1) + 'm</div><div class="lbl">Ladelänge</div></div>');
-      win.document.write('<div class="stat-box"><div class="val">' + (d.gesamtBreite ? (d.gesamtBreite / 1000).toFixed(2) + 'm' : '—') + '</div><div class="lbl">Ladebreite</div></div>');
-      win.document.write('<div class="stat-box"><div class="val">' + d.gesamtGewicht + 'kg</div><div class="lbl">Gewicht</div></div>');
-      win.document.write('<div class="stat-box"><div class="val">' + (d.empfehlung ? d.empfehlung.name : '—') + '</div><div class="lbl">Empfehlung</div></div>');
+      win.document.write('<div class="stat-box"><div class="val">' + erg.gesamtAnzahl + '</div><div class="lbl">Paletten</div></div>');
+      win.document.write('<div class="stat-box"><div class="val">' + (erg.gesamtLaenge / 1000).toFixed(1) + 'm</div><div class="lbl">Ladelänge</div></div>');
+      win.document.write('<div class="stat-box"><div class="val">' + (erg.gesamtBreite ? (erg.gesamtBreite / 1000).toFixed(2) + 'm' : '—') + '</div><div class="lbl">Ladebreite</div></div>');
+      win.document.write('<div class="stat-box"><div class="val">' + erg.gesamtGewicht + 'kg</div><div class="lbl">Gewicht</div></div>');
+      win.document.write('<div class="stat-box"><div class="val">' + (erg.empfehlung ? erg.empfehlung.name : '—') + '</div><div class="lbl">Empfehlung</div></div>');
       win.document.write('</div>');
 
-      if (d.warnungen && d.warnungen.length) {
+      if (erg.warnungen && erg.warnungen.length) {
         win.document.write('<div class="warn"><div class="warn-title">Nicht alle Paletten passen:</div>');
-        d.warnungen.forEach(w => win.document.write('<div>&bull; ' + w + '</div>'));
+        erg.warnungen.forEach(w => win.document.write('<div>&bull; ' + w + '</div>'));
         win.document.write('</div>');
       }
 
-      if (d.empfehlung) {
-        const pctL = Math.round(d.gesamtLaenge / d.empfehlung.laenge * 100);
+      if (erg.empfehlung) {
+        const pctL = Math.round(erg.gesamtLaenge / erg.empfehlung.laenge * 100);
         const colL = pctL > 100 ? '#c62828' : pctL > 90 ? '#f9a825' : '#2e7d32';
-        win.document.write('<div style="font-size:11px;margin-bottom:2px">' + d.empfehlung.name + ' — Länge ' + pctL + '%</div>');
+        win.document.write('<div style="font-size:11px;margin-bottom:2px">' + erg.empfehlung.name + ' — Länge ' + pctL + '%</div>');
         win.document.write('<div class="bar-container"><div class="bar" style="background:' + colL + ';width:' + Math.min(pctL, 100) + '%"></div></div>');
       }
-    }
 
-    // Draufsicht als Bild
-    const draufsicht = packResult.querySelector('.draufsicht-container');
-    if (draufsicht) {
-      win.document.write('<div class="draufsicht">' + draufsicht.innerHTML + '</div>');
+      // Draufsicht aus dem DOM holen
+      const draufsichtEls = document.querySelectorAll('.draufsicht-container');
+      const idx = lastPackData.ergebnisse.indexOf(erg);
+      if (draufsichtEls[idx]) {
+        win.document.write('<div class="draufsicht">' + draufsichtEls[idx].innerHTML + '</div>');
+      }
     }
   }
 
@@ -804,50 +805,59 @@ let lastPackData = null;
 
 function renderPackResult(data) {
   lastPackData = data;
-  const { reihen, gesamtLaenge, gesamtBreite, gesamtGewicht, gesamtAnzahl, empfehlung, warnungen, lkwTypen } = data;
+  const { ergebnisse, lkwTypen } = data;
 
-  let html = '<div class="card"><div class="card-header">Packberechnung</div>';
+  let html = '';
+  for (const erg of ergebnisse) {
+    html += `<div class="card" style="margin-top:16px">
+      <div class="card-header">
+        <span>#${erg.auftrag_id} — ${esc(erg.kunde)}</span>
+        <span style="font-weight:400;font-size:12px;color:var(--text-muted)">${esc(erg.abholung_ort || '?')} → ${esc(erg.lieferung_ort || '?')}</span>
+      </div>`;
 
-  // Warnungen anzeigen
-  if (warnungen && warnungen.length) {
-    html += '<div style="background:#fff3e0;border:1px solid #ff9800;border-left:4px solid #e65100;border-radius:var(--radius);padding:12px;margin-bottom:16px">';
-    html += '<div style="font-weight:700;color:#e65100;margin-bottom:6px">&#9888; Nicht alle Paletten passen:</div>';
-    html += warnungen.map(w => `<div style="font-size:13px;color:#bf360c;padding:2px 0">&bull; ${esc(w)}</div>`).join('');
+    // Warnungen
+    if (erg.warnungen && erg.warnungen.length) {
+      html += '<div style="background:#fff3e0;border:1px solid #ff9800;border-left:4px solid #e65100;border-radius:var(--radius);padding:10px;margin-bottom:12px">';
+      html += '<div style="font-weight:700;color:#e65100;margin-bottom:4px;font-size:13px">&#9888; Nicht alle Paletten passen:</div>';
+      html += erg.warnungen.map(w => `<div style="font-size:12px;color:#bf360c;padding:1px 0">&bull; ${esc(w)}</div>`).join('');
+      html += '</div>';
+    }
+
+    // Stats
+    html += `<div class="stats-row">
+      <div class="stat-card"><div class="stat-value">${erg.gesamtAnzahl}</div><div class="stat-label">Paletten</div></div>
+      <div class="stat-card"><div class="stat-value">${(erg.gesamtLaenge / 1000).toFixed(1)}m</div><div class="stat-label">Ladelänge</div></div>
+      <div class="stat-card"><div class="stat-value">${erg.gesamtBreite ? (erg.gesamtBreite / 1000).toFixed(2) + 'm' : '—'}</div><div class="stat-label">Ladebreite</div></div>
+      <div class="stat-card"><div class="stat-value">${erg.gesamtGewicht}kg</div><div class="stat-label">Gewicht</div></div>
+      <div class="stat-card"><div class="stat-value">${erg.empfehlung ? erg.empfehlung.name : '—'}</div><div class="stat-label">Empfehlung</div></div>
+    </div>`;
+
+    // Auslastungsbalken
+    if (erg.empfehlung) {
+      html += renderLkwSection(erg.empfehlung, erg.gesamtLaenge, erg.gesamtGewicht, erg.gesamtBreite);
+    }
+
+    // Draufsicht
+    if (erg.empfehlung && erg.reihen && erg.reihen.length) {
+      html += renderDraufsicht(erg.reihen, erg.empfehlung);
+    }
+
+    // LKW-Vergleich
+    html += `<div style="margin-top:12px;padding:12px;background:#f0f4f8;border-radius:var(--radius)">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <strong style="font-size:13px">Anderen LKW prüfen:</strong>
+        <select class="lkw-vergleich-sel" data-aid="${erg.auftrag_id}" style="padding:5px 10px;border-radius:var(--radius);border:1px solid var(--border);font-size:12px">
+          <option value="">— LKW wählen —</option>
+          ${(lkwTypen || []).map(l => `<option value="${l.id}">${esc(l.name)} (${(l.laenge/1000).toFixed(1)}m, max ${l.max_gewicht||'?'}kg)</option>`).join('')}
+        </select>
+        <button class="btn btn-sm btn-primary" onclick="vergleicheLkw(${erg.auftrag_id})">Prüfen</button>
+      </div>
+      <div id="lkw-vergleich-${erg.auftrag_id}"></div>
+    </div>`;
+
     html += '</div>';
   }
 
-  // Zusammenfassung
-  html += `<div class="stats-row">
-    <div class="stat-card"><div class="stat-value">${gesamtAnzahl}</div><div class="stat-label">Paletten</div></div>
-    <div class="stat-card"><div class="stat-value">${(gesamtLaenge / 1000).toFixed(1)}m</div><div class="stat-label">Ladelänge</div></div>
-    <div class="stat-card"><div class="stat-value">${gesamtBreite ? (gesamtBreite / 1000).toFixed(2) + 'm' : '—'}</div><div class="stat-label">Ladebreite</div></div>
-    <div class="stat-card"><div class="stat-value">${gesamtGewicht}kg</div><div class="stat-label">Gewicht</div></div>
-    <div class="stat-card"><div class="stat-value">${empfehlung ? empfehlung.name : '—'}</div><div class="stat-label">Empfehlung</div></div>
-  </div>`;
-
-  // Auslastungsbalken + LKW-Auswahl
-  const activeLkw = empfehlung || { name: '—', laenge: 0 };
-  html += renderLkwSection(activeLkw, gesamtLaenge, gesamtGewicht, gesamtBreite);
-
-  // Draufsicht
-  if (empfehlung && reihen.length) {
-    html += renderDraufsicht(reihen, empfehlung);
-  }
-
-  // LKW-Auswahl Dropdown
-  html += `<div style="margin-top:16px;padding:16px;background:#f0f4f8;border-radius:var(--radius)">
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <strong style="font-size:14px">Anderen LKW prüfen:</strong>
-      <select id="lkw-vergleich" style="padding:6px 12px;border-radius:var(--radius);border:1px solid var(--border);font-size:13px">
-        <option value="">— LKW wählen —</option>
-        ${(lkwTypen || []).map(l => `<option value="${l.id}">${esc(l.name)} (${(l.laenge/1000).toFixed(1)}m, max ${l.max_gewicht||'?'}kg)</option>`).join('')}
-      </select>
-      <button class="btn btn-sm btn-primary" onclick="vergleicheLkw()">Prüfen</button>
-    </div>
-    <div id="lkw-vergleich-result"></div>
-  </div>`;
-
-  html += '</div>';
   document.getElementById('dispo-result').innerHTML = html;
 }
 
@@ -868,7 +878,7 @@ function renderLkwSection(lkw, gesamtLaenge, gesamtGewicht, gesamtBreite) {
     </div>
     ${pctL > 100 ? '<div style="color:var(--rot);font-weight:700;margin-top:4px">&#9888; Ladelänge überschritten!</div>' : ''}
     <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;margin-top:8px">
-      <span>Breite (${(lkw.breite / 1000).toFixed(2)}m)</span>
+      <span>Breite (${((lkw.breite||2450) / 1000).toFixed(2)}m)</span>
       <span>${pctB}%</span>
     </div>
     <div style="background:#e0e0e0;border-radius:4px;height:10px;overflow:hidden">
@@ -880,58 +890,56 @@ function renderLkwSection(lkw, gesamtLaenge, gesamtGewicht, gesamtBreite) {
   return html;
 }
 
-function vergleicheLkw() {
+function vergleicheLkw(auftragId) {
   if (!lastPackData) return;
-  const sel = document.getElementById('lkw-vergleich');
+  const sel = document.querySelector(`.lkw-vergleich-sel[data-aid="${auftragId}"]`);
   const lkwId = parseInt(sel.value);
   if (!lkwId) { showFeedback('Bitte LKW auswählen', 'error'); return; }
 
   const lkw = lastPackData.lkwTypen.find(l => l.id === lkwId);
   if (!lkw) return;
 
-  const { gesamtLaenge, gesamtBreite, gesamtGewicht, gesamtAnzahl, reihen } = lastPackData;
-  const resultDiv = document.getElementById('lkw-vergleich-result');
+  const erg = lastPackData.ergebnisse.find(e => e.auftrag_id === auftragId);
+  if (!erg) return;
 
-  const pct = Math.round(gesamtLaenge / lkw.laenge * 100);
-  const gewichtOver = lkw.max_gewicht && gesamtGewicht > lkw.max_gewicht;
-  const laengeOver = gesamtLaenge > lkw.laenge;
-  const breiteOver = gesamtBreite > lkw.breite;
+  const resultDiv = document.getElementById('lkw-vergleich-' + auftragId);
 
-  let html = '<div style="margin-top:12px">';
+  const gewichtOver = lkw.max_gewicht && erg.gesamtGewicht > lkw.max_gewicht;
+  const laengeOver = erg.gesamtLaenge > lkw.laenge;
+  const breiteOver = erg.gesamtBreite > lkw.breite;
 
-  // Probleme sammeln
+  let html = '<div style="margin-top:10px">';
+
   const probleme = [];
   if (laengeOver) {
-    const diff = Math.round(gesamtLaenge - lkw.laenge);
-    probleme.push(`Ladelänge: ${(gesamtLaenge/1000).toFixed(1)}m benötigt, aber nur ${(lkw.laenge/1000).toFixed(1)}m verfügbar (${diff}mm zu lang)`);
+    const diff = Math.round(erg.gesamtLaenge - lkw.laenge);
+    probleme.push(`Ladelänge: ${(erg.gesamtLaenge/1000).toFixed(1)}m benötigt, aber nur ${(lkw.laenge/1000).toFixed(1)}m verfügbar (${diff}mm zu lang)`);
   }
   if (breiteOver) {
-    const diff = Math.round(gesamtBreite - lkw.breite);
-    probleme.push(`Ladebreite: ${(gesamtBreite/1000).toFixed(2)}m benötigt, aber nur ${(lkw.breite/1000).toFixed(2)}m verfügbar (${diff}mm zu breit)`);
+    const diff = Math.round(erg.gesamtBreite - lkw.breite);
+    probleme.push(`Ladebreite: ${(erg.gesamtBreite/1000).toFixed(2)}m benötigt, aber nur ${(lkw.breite/1000).toFixed(2)}m verfügbar (${diff}mm zu breit)`);
   }
   if (gewichtOver) {
-    const diff = Math.round(gesamtGewicht - lkw.max_gewicht);
-    probleme.push(`Gewicht: ${gesamtGewicht}kg benötigt, aber max. ${lkw.max_gewicht}kg erlaubt (${diff}kg zu schwer)`);
+    const diff = Math.round(erg.gesamtGewicht - lkw.max_gewicht);
+    probleme.push(`Gewicht: ${erg.gesamtGewicht}kg benötigt, aber max. ${lkw.max_gewicht}kg erlaubt (${diff}kg zu schwer)`);
   }
 
   if (probleme.length) {
-    html += '<div style="background:#ffebee;border:1px solid #ef5350;border-left:4px solid #c62828;border-radius:var(--radius);padding:12px;margin-bottom:12px">';
-    html += `<div style="font-weight:700;color:#c62828;margin-bottom:6px">&#10060; ${esc(lkw.name)} passt nicht:</div>`;
-    html += probleme.map(p => `<div style="font-size:13px;color:#b71c1c;padding:2px 0">&bull; ${esc(p)}</div>`).join('');
+    html += '<div style="background:#ffebee;border:1px solid #ef5350;border-left:4px solid #c62828;border-radius:var(--radius);padding:10px;margin-bottom:10px">';
+    html += `<div style="font-weight:700;color:#c62828;margin-bottom:4px;font-size:13px">&#10060; ${esc(lkw.name)} passt nicht:</div>`;
+    html += probleme.map(p => `<div style="font-size:12px;color:#b71c1c;padding:1px 0">&bull; ${esc(p)}</div>`).join('');
     html += '</div>';
   } else {
-    html += '<div style="background:#e8f5e9;border:1px solid #66bb6a;border-left:4px solid #2e7d32;border-radius:var(--radius);padding:12px;margin-bottom:12px">';
-    html += `<div style="font-weight:700;color:#2e7d32">&#10004; ${esc(lkw.name)} passt!</div>`;
+    html += '<div style="background:#e8f5e9;border:1px solid #66bb6a;border-left:4px solid #2e7d32;border-radius:var(--radius);padding:10px;margin-bottom:10px">';
+    html += `<div style="font-weight:700;color:#2e7d32;font-size:13px">&#10004; ${esc(lkw.name)} passt!</div>`;
     html += '</div>';
   }
 
-  // Auslastungsbalken
   const empf = { name: lkw.name, laenge: lkw.laenge, breite: lkw.breite, max_gewicht: lkw.max_gewicht };
-  html += renderLkwSection(empf, gesamtLaenge, gesamtGewicht, gesamtBreite);
+  html += renderLkwSection(empf, erg.gesamtLaenge, erg.gesamtGewicht, erg.gesamtBreite);
 
-  // Draufsicht mit diesem LKW
-  if (reihen && reihen.length) {
-    html += renderDraufsicht(reihen, empf);
+  if (erg.reihen && erg.reihen.length) {
+    html += renderDraufsicht(erg.reihen, empf);
   }
 
   html += '</div>';
